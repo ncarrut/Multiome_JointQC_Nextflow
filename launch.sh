@@ -10,7 +10,7 @@
 #SBATCH --signal=B:TERM@60
 
 module load openjdk/18.0.1.1
-module load singularity/4.1.3
+module load singularity/4.1.5
 
 exec nextflow run -resume main.nf \
   --sample_id 10k_PBMC_Multiome_nextgem_Chromium_X \

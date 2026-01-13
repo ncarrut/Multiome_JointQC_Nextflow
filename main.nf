@@ -10,7 +10,6 @@ params.outdir = "results"
 process JOINT_QC {
     tag "${sample_id}"
     memory '32 GB'
-    container 'docker://porchard/general:20220406125608'
     publishDir "${params.outdir}/${sample_id}", mode: 'copy'
 
     input:
