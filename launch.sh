@@ -13,7 +13,5 @@ module load openjdk/18.0.1.1
 module load singularity/4.1.5
 
 exec nextflow run -resume main.nf \
-  --sample_id 10k_PBMC_Multiome_nextgem_Chromium_X \
-  --rna_results_dir /home/xiaoouw/0_multiomePipeline/xiaoouw/results/pbmc_nf/RNA/ \
-  --atac_results_dir /home/xiaoouw/0_multiomePipeline/xiaoouw/results/pbmc_nf/ATAC/ \
-  --outdir /home/xiaoouw/0_multiomePipeline/xiaoouw/results/pbmc_nf/joint_QC_01092026
+  --params-file /nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Rubenstein_2025/Multiome_QC/Multiome_JointQC_Nextflow/library-config.json
+  --outdir /nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Rubenstein_2025/Multiome_QC/results
