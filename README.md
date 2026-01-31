@@ -1,38 +1,33 @@
 # Multiome Joint QC (Nextflow)
 
-This workflow runs the `joint_qc.py` script to generate joint RNA/ATAC QC plots
-and metrics for a single sample.
+This workflow runs the `joint_qc.py` script to generate joint RNA/ATAC QC plots.
 
 ## Requirements
 
 - Nextflow (DSL2)
 - Singularity/Apptainer module available on compute nodes
-- Container image (default: `library://alicewang24/python/jointqc_20260113:latest`)
+- Container image (default: `docker://ncarrut/singlecell_qc:second`)
 
 ## Inputs
 
 Required parameters:
-- `--sample_id` : sample name
-- `--rna_results_dir` : RNA results directory (output of https://github.com/porchard/snRNAseq-NextFlow)
-- `--atac_results_dir` : ATAC results directory (output of https://github.com/porchard/snATACseq-NextFlow)
+- `--params-file` : json file listing sample RNA and ATAC data locations for each sample (see library-config.json)
 - `--outdir` : output directory for results (default: `results`)
 
 ## Run
 
 ```bash
 nextflow run main.nf \
-  --sample_id 10k_PBMC_Multiome_nextgem_Chromium_X \
-  --rna_results_dir /path/to/RNA/ \
-  --atac_results_dir /path/to/ATAC/ \
+  --params-file library-config.json \
   --outdir /path/to/output
 ```
 
 ## Outputs
 
-Results are written to `--outdir/<sample_id>/`:
-- `qcPlot.png`
-- `upsetPlot.png`
-- `metrics.txt`
+Results are written to `--outdir/`:
+- `<sample_id>_qcPlot.png`
+- `<sample_id>_upsetPlot.png`
+- `<sample_id>_metrics.txt`
 
 ## Container
 

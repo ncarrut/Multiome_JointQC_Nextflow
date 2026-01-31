@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
+import os
+
+current_dir = os.getcwd() 
+os.environ['MPLCONFIGDIR'] = current_dir
+
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -13,7 +18,6 @@ import numpy as np
 import scipy.sparse as sp
 from scipy import io
 import glob
-import os
 import upsetplot
 from scipy.io import mmread
 import csv

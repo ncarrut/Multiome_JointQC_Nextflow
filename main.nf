@@ -10,15 +10,15 @@ params.outdir = "results"
 process JOINT_QC {
     tag "${sample_id}"
     memory '32 GB'
-    publishDir "${params.outdir}/${sample_id}", mode: 'copy'
+    publishDir "${params.outdir}", mode: 'copy'
 
     input:
         tuple val(sample_id), val(rna_results_dir), val(atac_results_dir)
 
     output:
-        path "qcPlot.png", emit: qc_plot
-        path "upsetPlot.png", emit: upset_plot
-        path "metrics.txt", emit: metrics
+        path "${sample_id}_qcPlot.png", emit: qc_plot
+        path "${sample_id}_upsetPlot.png", emit: upset_plot
+        path "${sample_id}_metrics.txt", emit: metrics
 
     script:
     """
@@ -28,16 +28,23 @@ process JOINT_QC {
         --ATAC_results_dir ${atac_results_dir} \\
         --RNA_BARCODE_WHITELIST ${baseDir}/737K-arc-v1-rna.txt \\
         --ATAC_BARCODE_WHITELIST ${baseDir}/737K-arc-v1-atac.txt \\
-        --qcPlot qcPlot.png \\
-        --upsetPlot upsetPlot.png \\
-        --outmetrics metrics.txt
+        --qcPlot ${sample_id}_qcPlot.png \\
+        --upsetPlot ${sample_id}_upsetPlot.png \\
+        --outmetrics ${sample_id}_metrics.txt
     """
 }
 
 workflow {
-    if (!params.sample_id || !params.rna_results_dir || !params.atac_results_dir) {
-        error "Missing params. Example: nextflow run main.nf --sample_id S1 --rna_results_dir /path/RNA --atac_results_dir /path/ATAC"
+    libraries = params.libraries.keySet()
+
+    qc_pipeline_in = []
+
+    for (library in libraries) {
+        rna_results_dir = params.libraries[library]["RNA_results_dir"]
+        atac_results_dir = params.libraries[library]["ATAC_results_dir"]
+        qc_pipeline_in << [library, rna_results_dir, atac_results_dir]
     }
 
-    JOINT_QC(tuple(params.sample_id, params.rna_results_dir, params.atac_results_dir))
+    qc_pipeline_ch = Channel.from(qc_pipeline_in)
+    JOINT_QC(qc_pipeline_ch)
 }
