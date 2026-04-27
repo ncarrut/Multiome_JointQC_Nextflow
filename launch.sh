@@ -12,6 +12,6 @@
 module load openjdk/18.0.1.1
 module load singularity/4.1.5
 
-exec nextflow run -resume main.nf \
-  --params-file /nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Rubenstein_2025/Multiome_QC/Multiome_JointQC_Nextflow/library-config.json
-  --outdir /nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Rubenstein_2025/Multiome_QC/results
+exec nextflow run -resume Multiome_JointQC_Nextflow/main.nf \
+  --samplesheet /nfs/mm-isilon/bioinfcore/ActiveProjects/Lukacs_nlukacs_CU2-Multiome_ncarruth_rcavalca_12540-AE/analysis_from_cell_ranger/Multiome_JointQC_Nextflow/samplesheet.txt
+  

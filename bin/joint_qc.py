@@ -26,40 +26,58 @@ import argparse
 
 parser = argparse.ArgumentParser("Plot QC metrics per sample")
 parser.add_argument("--sample", help="Donor ID.", type=str)
-parser.add_argument("--RNA_results_dir", help="Path to RNA results directory.", type=str)
-parser.add_argument("--ATAC_results_dir", help="Path to ATAC results directory.", type=str)
+parser.add_argument("--ATAC_metrics", help="Path to ATAC ataqv metrics file.", type=str)
+parser.add_argument("--INTRON_COUNTS", help="Path to intron counter output file.", type=str)
+parser.add_argument("--CELLBENDER", help="Path to CellBender FPR 0.05 h5 file.", type=str)
+parser.add_argument("--RNA_METRICS", help="Path to RNA QC metrics file.", type=str)
+parser.add_argument("--knee", help="Path to emptyDrops knee file.", type=str)
+parser.add_argument("--passQC", help="Path to emptyDrops pass file.", type=str)
 parser.add_argument("--RNA_BARCODE_WHITELIST", help="Path to RNA barcode whitelist.", type=str)
 parser.add_argument("--ATAC_BARCODE_WHITELIST", help="Path to ATAC barcode whitelist.", type=str)
 parser.add_argument("--qcPlot", help="Path to save qcPlot plots.", type=str)
 parser.add_argument("--upsetPlot", help="Path to save upset plots.", type=str)
 parser.add_argument("--outmetrics", help="Path to save all metrics results.", type=str)
+parser.add_argument("--manual", action="store_true", help="Manual mode: read all args from .command.sh in the current working directory.")
 
 
 args = parser.parse_args()
 
+#args.manual = True
 # ---inputs---
-donor = args.sample
+if args.manual:
+    import re
+    with open('.command.sh') as _f:
+        _cmd = _f.read()
+    def _get_arg(name):
+        m = re.search(rf'--{name}\s+(\S+)', _cmd)
+        return m.group(1) if m else None
+    donor = _get_arg('sample')
+    ATAC_METRICS = _get_arg('ATAC_metrics')
+    INTRON_COUNTS = _get_arg('INTRON_COUNTS')
+    CELLBENDER = _get_arg('CELLBENDER')
+    RNA_METRICS = _get_arg('RNA_METRICS')
+    KNEE = _get_arg('knee')
+    passQC = _get_arg('passQC')
+    RNA_BARCODE_WHITELIST = _get_arg('RNA_BARCODE_WHITELIST')
+    ATAC_BARCODE_WHITELIST = _get_arg('ATAC_BARCODE_WHITELIST')
+    args.qcPlot = _get_arg('qcPlot')
+    args.upsetPlot = _get_arg('upsetPlot')
+    args.outmetrics = _get_arg('outmetrics')
+else:
+    donor = args.sample
+    ATAC_METRICS = args.ATAC_metrics
+    INTRON_COUNTS = args.INTRON_COUNTS
+    CELLBENDER = args.CELLBENDER
+    RNA_METRICS = args.RNA_METRICS
+    KNEE = args.knee
+    passQC = args.passQC
+    RNA_BARCODE_WHITELIST = args.RNA_BARCODE_WHITELIST
+    ATAC_BARCODE_WHITELIST = args.ATAC_BARCODE_WHITELIST
+
 print(donor)
-RNA_results_dir = str(args.RNA_results_dir)
-print(RNA_results_dir)
-ATAC_results_dir = args.ATAC_results_dir
-RNA_BARCODE_WHITELIST = args.RNA_BARCODE_WHITELIST
-ATAC_BARCODE_WHITELIST = args.ATAC_BARCODE_WHITELIST
-
-CELLBENDER = RNA_results_dir+'cellbender/'+donor+'-hg38.cellbender_FPR_0.05.h5'
-
-RNA_METRICS = RNA_results_dir+'qc/'+donor+'-hg38.qc.txt'
-ATAC_METRICS = ATAC_results_dir+'ataqv/single-nucleus/'+donor+'-hg38.txt'
-GENE_FULL_EXON_OVER_INTRON_COUNTS = RNA_results_dir + 'starsolo/' + donor + '-hg38/' + donor + '-hg38.Solo.out/GeneFull_ExonOverIntron/raw'
-GENE_COUNTS = RNA_results_dir + 'starsolo/' + donor + '-hg38/' + donor + '-hg38.Solo.out/Gene/raw'
-knee = RNA_results_dir + 'emptyDrops/' + donor + '-hg38.knee.txt'
-passQC = RNA_results_dir + 'emptyDrops/' + donor + '-hg38.pass.txt'
-atac_sugg = pd.read_csv(ATAC_results_dir + 'ataqv/single-nucleus/' + donor + '-hg38.suggested-thresholds.tsv', sep = '\t')
-rna_sugg = pd.read_csv(RNA_results_dir + 'qc/' + donor + '-hg38.suggested-thresholds.tsv', sep = '\t')
 
 # ---process inputs---
 THRESHOLD_CELLBENDER_MIN_CELL_PROBABILITY = 0.99
-THRESHOLD_ATAC_MIN_HQAA = atac_sugg.iloc[0]['threshold']
 THRESHOLD_ATAC_MIN_TSS_ENRICHMENT = 2
 
 #### FUNCTIONS FROM CELLBENDER
@@ -87,11 +105,9 @@ def anndata_from_h5(file: str,
         adata: The anndata object, populated with inferred latent variables
             and metadata.
     """
-
     d = dict_from_h5(file)
     X = sp.csc_matrix((d.pop('data'), d.pop('indices'), d.pop('indptr')),
                       shape=d.pop('shape')).transpose().tocsr()
-
     # check and see if we have barcode index annotations, and if the file is filtered
     barcode_key = [k for k in d.keys() if (('barcode' in k) and ('ind' in k))]
     if len(barcode_key) > 0:
@@ -99,7 +115,6 @@ def anndata_from_h5(file: str,
         filtered_file = (max_barcode_ind >= X.shape[0])
     else:
         filtered_file = True
-
     if analyzed_barcodes_only:
         if filtered_file:
             # filtered file being read, so we don't need to subset
@@ -117,7 +132,6 @@ def anndata_from_h5(file: str,
                   'is missing from the h5 file. '
                   'Will output all barcodes, and proceed as if '
                   'analyzed_barcodes_only=False')
-
     # Construct the anndata object.
     adata = anndata.AnnData(X=X,
                             obs={'barcode': d.pop('barcodes').astype(str)},
@@ -126,30 +140,24 @@ def anndata_from_h5(file: str,
                             dtype=X.dtype)
     adata.obs.set_index('barcode', inplace=True)
     adata.var.set_index('gene_name', inplace=True)
-
     # For CellRanger v2 legacy format, "gene_ids" was called "genes"... rename this
     if 'genes' in d.keys():
         d['id'] = d.pop('genes')
-
     # For purely aesthetic purposes, rename "id" to "gene_id"
     if 'id' in d.keys():
         d['gene_id'] = d.pop('id')
-
     # If genomes are empty, try to guess them based on gene_id
     if 'genome' in d.keys():
         if np.array([s.decode() == '' for s in d['genome']]).all():
             if '_' in d['gene_id'][0].decode():
                 print('Genome field blank, so attempting to guess genomes based on gene_id prefixes')
                 d['genome'] = np.array([s.decode().split('_')[0] for s in d['gene_id']], dtype=str)
-
     # Add other information to the anndata object in the appropriate slot.
     _fill_adata_slots_automatically(adata, d)
-
     # Add a special additional field to .var if it exists.
     if 'features_analyzed_inds' in adata.uns.keys():
         adata.var['cellbender_analyzed'] = [True if (i in adata.uns['features_analyzed_inds'])
                                             else False for i in range(adata.shape[1])]
-
     if analyzed_barcodes_only:
         for col in adata.obs.columns[adata.obs.columns.str.startswith('barcodes_analyzed')
                                      | adata.obs.columns.str.startswith('barcode_indices')]:
@@ -162,15 +170,12 @@ def anndata_from_h5(file: str,
         if 'barcodes_analyzed_inds' in adata.uns.keys():
             adata.obs['cellbender_analyzed'] = [True if (i in adata.uns['barcodes_analyzed_inds'])
                                                 else False for i in range(adata.shape[0])]
-
     return adata
 
 
 def _fill_adata_slots_automatically(adata, d):
     """Add other information to the adata object in the appropriate slot."""
-
     # TODO: what about "features_analyzed_inds"?  If not all features are analyzed, does this work?
-
     for key, value in d.items():
         try:
             if value is None:
@@ -282,32 +287,37 @@ def estimate_threshold(x, classes=3):
     UMI_THRESHOLD = round(thresholds[classes - 2])
     return UMI_THRESHOLD
 
-# ATAC --> RNA barcode mappings
-rna_barcodes = pd.read_csv(RNA_BARCODE_WHITELIST, header=None)[0].to_list()
-atac_barcodes = pd.read_csv(ATAC_BARCODE_WHITELIST, header=None)[0].to_list()
-atac_to_rna = dict(zip(atac_barcodes, rna_barcodes))
+## not sure I need this since 10X uses rna barcodes for both
+# # ATAC --> RNA barcode mappings
+# rna_barcodes = pd.read_csv(RNA_BARCODE_WHITELIST, header=None)[0].to_list()
+# atac_barcodes = pd.read_csv(ATAC_BARCODE_WHITELIST, header=None)[0].to_list()
+# ## append numbers to the end of the barcodes to match 10X matrices. Currently expects that appended numbers can only be 1.  Throw error otherwise
+# rna_barcodes = [b + '-1' for b in rna_barcodes]
+# atac_barcodes = [b + '-1' for b in atac_barcodes]
+
+# atac_to_rna = dict(zip(atac_barcodes, rna_barcodes))
 
 #load metrics df
 adata = anndata_from_h5(CELLBENDER, analyzed_barcodes_only=True)
 rna_metrics = pd.read_csv(RNA_METRICS, sep='\t')
 rna_metrics = rna_metrics[rna_metrics.barcode!='-']
+rna_metrics = rna_metrics[rna_metrics.barcode!='no_barcode']
+_rna_suffix = rna_metrics.barcode.str.extract(r'-(\d+)$', expand=False).astype(float)
+_bad_rna_metrics = rna_metrics.barcode[_rna_suffix.gt(1)].tolist()
+if _bad_rna_metrics:
+    sys.exit(f"Error: rna_metrics barcodes have numeric suffixes > 1: {_bad_rna_metrics[:5]}")
 
-## Calculate ratio of exonic vs full gene body reads
-# exons only
-gene_mat = mmread(os.path.join(GENE_COUNTS, 'matrix.mtx'))
-gene_umis_per_barcode = gene_mat.sum(axis=0).tolist()[0]
+## Calculate ratio of exonic vs full gene body reads from intron counter output
+intron_counts = pd.read_csv(INTRON_COUNTS, sep=r'\s+', header=None, names=['count', 'barcode', 'type'],
+                             engine='python', skipinitialspace=True)
+intron_counts = intron_counts[intron_counts.type.isin(['E', 'I'])]
+intron_pivot = intron_counts.pivot_table(index='barcode', columns='type', values='count',
+                                         aggfunc='sum', fill_value=0).reset_index()
+intron_pivot = intron_pivot.set_index('barcode')
+intron_pivot.columns.name = None
 
-# includes introns
-gene_full_mat = mmread(os.path.join(GENE_FULL_EXON_OVER_INTRON_COUNTS, 'matrix.mtx'))
-gene_full_umis_per_barcode = gene_full_mat.sum(axis=0).tolist()[0]
-
-barcodes = pd.read_csv(os.path.join(GENE_COUNTS, 'barcodes.tsv'), header=None)[0]
-assert(all(barcodes == pd.read_csv(os.path.join(GENE_FULL_EXON_OVER_INTRON_COUNTS, 'barcodes.tsv'), header=None)[0]))
-
-exon_to_full_gene_body_ratio = pd.DataFrame({'barcode': barcodes, 'gene': gene_umis_per_barcode, 'gene_full': gene_full_umis_per_barcode})
-exon_to_full_gene_body_ratio['exon_to_full_gene_body_ratio'] = exon_to_full_gene_body_ratio.gene / exon_to_full_gene_body_ratio.gene_full
-umis_genefull_exon_over_intron = exon_to_full_gene_body_ratio.set_index('barcode').gene_full.to_dict()
-rna_metrics = rna_metrics.merge(exon_to_full_gene_body_ratio)
+exon_ratio_dict = (intron_pivot['E'] / (intron_pivot['E'] + intron_pivot['I'])).to_dict()
+rna_metrics['exon_to_full_gene_body_ratio'] = rna_metrics.barcode.map(exon_ratio_dict)
 metrics = rna_metrics.set_index('barcode').rename(columns=lambda x: 'rna_' + x)
 
 ## cellbender-related statistics
@@ -326,7 +336,7 @@ bc = pd.read_csv(passQC, header=0, delim_whitespace="\t")
 metrics['filter_rna_emptyDrops'] = metrics['barcode'].isin(bc.barcode)
 
 ### load metrics on knee plot
-KNEE_FILE = knee
+KNEE_FILE = KNEE
 with open(KNEE_FILE, 'r') as file:
     reader = csv.reader(file, delimiter='\t')
     next(reader, None)
@@ -345,6 +355,7 @@ import math
 def round_up(n, decimals=0):
     multiplier = 10**decimals
     return math.ceil(n / multiplier) * multiplier
+
 MAX_EXPECTED_NUMBER_NUCLEI = round_up(len(metrics[metrics.rna_umis >= inflection]), 3)
 LOWERBOUNDS = np.concatenate(([1, 5], np.arange(10, 251, 10), [300, 350, 400, 450, 500]))
 
@@ -378,6 +389,7 @@ THRESHOLD_FRACTION_CB_REMOVED = estimate_threshold(metrics[(metrics.filter_rna_e
                                                            (metrics.pct_cellbender_removed<100) &
                                                            (np.isnan(metrics.pct_cellbender_removed) == False)].pct_cellbender_removed.astype(float),
                                                    classes = 4)
+
 metrics['filter_pct_cellbender_removed'] = metrics.pct_cellbender_removed <= THRESHOLD_FRACTION_CB_REMOVED
 
 ### get THRESHOLD_EXON_GENE_BODY_RATIO
@@ -480,10 +492,8 @@ if n_knee == 1:
                 (metrics.rna_percent_mitochondrial > 0) &
                 (metrics.rna_percent_mitochondrial < 50) &
                 (metrics.filter_pct_cellbender_removed == True)].rna_percent_mitochondrial)
-
     # Create a 2D array representation
     heatmap, xedges, yedges = np.histogram2d(x, y, bins=150) # the smaller bins is, the smoother the heatmap would be. bins=150 was chosen after testing 50, 100, 150, 200 and 300
-
     smooth = ski.filters.gaussian(heatmap, sigma=2) #use Gaussian filtering to smooth out the data points that do not cluster together
     thresh = smooth > threshold_multiotsu(image=smooth, classes = 4)[1] #use Multi-Otsu to estimate a threshold that marks foreground and background in the image `smooth`
     labels = ski.morphology.label(thresh)
@@ -491,7 +501,6 @@ if n_knee == 1:
     background = np.argmax(labelCount)
     thresh[labels != background] = 255
     heatmap_seg = thresh
-
     true_indices = np.argwhere(np.any(heatmap_seg.T, axis=1))
     if true_indices.size > 0:
         # Get the highest row index that contains True
@@ -500,7 +509,6 @@ if n_knee == 1:
         extent_top = yedges[-1]
         extent_bottom = yedges[0]
         number_of_rows = heatmap_seg.shape[0]
-
         # Calculate the y-coordinate
         max_y_coordinate = extent_bottom + (extent_top - extent_bottom) * (max_true_row_index / (number_of_rows - 1))
     else:
@@ -518,7 +526,6 @@ if n_knee == 1:
         background = np.argmax(labelCount)
         thresh[labels != background] = 255
         heatmap_seg = thresh
-        
         true_indices = np.argwhere(np.any(heatmap_seg.T, axis=1))
         if true_indices.size > 0:
             max_true_row_index = np.max(true_indices)
@@ -533,7 +540,6 @@ if n_knee == 1:
                                                                  (metrics.rna_percent_mitochondrial > 1) &
                                                                  (metrics.rna_percent_mitochondrial < 50) &
                                                                  (metrics.filter_pct_cellbender_removed == True)].rna_percent_mitochondrial.astype(float), classes = n_knee+1))
-
     THRESHOLD_RNA_MAX_MITO = round(pow(10, max_y_coordinate))
 else:
     THRESHOLD_RNA_MAX_MITO = estimate_threshold(metrics[(metrics.filter_rna_emptyDrops == True) &
@@ -636,6 +642,8 @@ print('Number of prominent cliff in knee plot analysis is {:,}'.format(n_knee))
 
 ### ATAC side ###
 atac_metrics = pd.read_csv(ATAC_METRICS, sep='\t', index_col=0).rename_axis(index='barcode')
+atac_metrics = atac_metrics[atac_metrics.index!='no_barcode']
+
 KEEP_ATAC_METRICS = ['median_fragment_length', 'hqaa', 'max_fraction_reads_from_single_autosome', 'percent_mitochondrial', 'tss_enrichment']
 atac_metrics = atac_metrics[KEEP_ATAC_METRICS]
 atac_metrics.max_fraction_reads_from_single_autosome = atac_metrics.max_fraction_reads_from_single_autosome.fillna(0)
@@ -644,12 +652,16 @@ atac_metrics.percent_mitochondrial = atac_metrics.percent_mitochondrial.fillna(0
 atac_metrics.tss_enrichment = atac_metrics.tss_enrichment.fillna(0)
 atac_metrics['fraction_mitochondrial'] = atac_metrics.percent_mitochondrial / 100
 
-atac_metrics.index = atac_metrics.index.map(atac_to_rna)
+THRESHOLD_ATAC_MIN_HQAA = estimate_threshold(atac_metrics.hqaa[atac_metrics.hqaa > 0].dropna())
 
-metrics = metrics.set_index('barcode').rename(columns=lambda x: '' + x).join(atac_metrics.rename(columns=lambda x: 'atac_' + x))
+#atac_metrics.index = atac_metrics.index.map(atac_to_rna)
+metrics = metrics.set_index('barcode')
+metrics = metrics.join(atac_metrics.rename(columns=lambda x: 'atac_' + x))
 
 # %chrMT on ATAC module
 metrics['filter_atac_min_hqaa'] = metrics.atac_hqaa >= THRESHOLD_ATAC_MIN_HQAA
+print("NaNs in atac_hqaa:", metrics.atac_hqaa.isna().sum())
+print("NaNs in atac_hqaa:", atac_metrics.hqaa.isna().sum())
 
 ### get THRESHOLD_ATAC_MAX_MITO
 # Step 0: check the number of distributions along the RNA_mito_percent axis
@@ -686,10 +698,8 @@ if n_knee == 1:
     y = np.log10(metrics[(metrics.filter_atac_min_hqaa == True) &
                         (metrics.atac_percent_mitochondrial > 0) &
                         (metrics.atac_percent_mitochondrial < 50)].atac_percent_mitochondrial)
-
     # Create a 2D array representation
     heatmap, xedges, yedges = np.histogram2d(x, y, bins=150) # the smaller bins is, the smoother the heatmap would be. bins=150 was chosen after testing 50, 100, 150, 200 and 300
-
     smooth = ski.filters.gaussian(heatmap, sigma=2) #use Gaussian filtering to smooth out the data points that do not cluster together
     thresh = smooth > threshold_multiotsu(image=smooth, classes = 4)[1] #use Multi-Otsu to estimate a threshold that marks foreground and background in the image `smooth`
     labels = ski.morphology.label(thresh)
@@ -698,7 +708,6 @@ if n_knee == 1:
     thresh[labels != background] = 255
     heatmap_seg = thresh
     true_indices = np.argwhere(np.any(heatmap_seg.T, axis=1))
-    
     if true_indices.size > 0:
         # Get the highest row index that contains True
         max_true_row_index = np.max(true_indices)
@@ -706,7 +715,6 @@ if n_knee == 1:
         extent_top = yedges[-1]
         extent_bottom = yedges[0]
         number_of_rows = heatmap_seg.shape[0]
-
         # Calculate the y-coordinate
         max_y_coordinate = extent_bottom + (extent_top - extent_bottom) * (max_true_row_index / (number_of_rows - 1))
     else:
@@ -736,7 +744,6 @@ if n_knee == 1:
             max_y_coordinate = np.log10(estimate_threshold(metrics[(metrics.filter_atac_min_hqaa == True) &
                                                         (metrics.atac_percent_mitochondrial > 1) &
                                                         (metrics.atac_percent_mitochondrial < 50)].atac_percent_mitochondrial.astype(float), classes = n_knee+1))
-
     THRESHOLD_ATAC_MAX_MITO = round(pow(10, max_y_coordinate))
     
 else:
