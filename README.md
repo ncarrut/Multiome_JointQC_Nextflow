@@ -1,41 +1,34 @@
 # Multiome Joint QC (Nextflow)
 
-This workflow runs the `joint_qc.py` script to generate joint RNA/ATAC QC plots.
+This workflow submits 10X cellranger multiome data to a custom QC analysis. Output includes background corrected RNASeq counts and a list of passQC barcodes plus QC plots and visualizations.  
 
 ## Requirements
 
 - Nextflow (DSL2)
 - Singularity/Apptainer module available on compute nodes
-- Container image (default: `docker://ncarrut/singlecell_qc:second`)
 
 ## Inputs
 
 Required parameters:
-- `--params-file` : json file listing sample RNA and ATAC data locations for each sample (see library-config.json)
-- `--outdir` : output directory for results (default: `results`)
+- `--samplesheet` : tab-delimited text file with at least the columns `sample` and `location` giving sample names and locations for the cellranger output.
 
 ## Run
 
 ```bash
-nextflow run main.nf \
-  --params-file library-config.json \
-  --outdir /path/to/output
+nextflow run -resume path_to_main.nf \
+  --samplesheet path_to_samplesheet.txt \
+  --results results
 ```
 
-## Outputs
+## Output
+`atac_qc`         -: ATAQV visualizations at bulk and single cell levels
+`atacv`           -: figures and data related to ATAQV
+`bigwig`          -: ATAC bigwig files for TSS for selected genes
+`cellbender`      -: background filtered RNA counts:  `<sample>.cellbender_FPR_0.05.h5` 
+`counter`         -: intermediate data for intron/exon quantification
+`emptyDrops`      -: artifacts from Empty Drops
+`interactive...`  -: RNASeq barcode-rank plots
+`joint_qc`        -: plots and tables from the joint QC script.  Passqc barcodes can be extracted from `<sample>_metrics.txt`
+`qc`              -: RNASeq QC artifacts 
+`splitter`        -: Separate RNA and ATAC data matrices.  Note both modalities use the 'RNA barcodes'
 
-Results are written to `--outdir/`:
-- `<sample_id>_qcPlot.png`
-- `<sample_id>_upsetPlot.png`
-- `<sample_id>_metrics.txt`
-
-## Container
-
-The container is configured in `nextflow.config`:
-
-```
-process.container = 'library://alicewang24/python/jointqc_20260113:latest'
-```
-
-If you want to use a local `.sif`, replace the value with the absolute path and
-ensure the directory is bound in `containerOptions`.

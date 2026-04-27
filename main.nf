@@ -346,7 +346,7 @@ process ATAQV_BULK_VIEWER {
 process JOINT_QC {
     tag "${sample_id}"
     memory '32 GB'
-    publishDir "${params.results}", mode: 'copy'
+    publishDir "${params.results}/joint_qc", mode: 'copy'
     container 'docker://ncarrut/singlecell_qc:second'
 
     input:

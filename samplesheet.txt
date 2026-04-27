@@ -1,0 +1,7 @@
+sample	location	cluster_res	df_pk
+S1	/nfs/mm-isilon/bioinfcore/ActiveProjects/Lukacs_nlukacs_CU2-Multiome_ncarruth_rcavalca_12540-AE/input/Seq/10x_analysis_12540-AE/Sample_12540-AE-1		
+S2	/nfs/mm-isilon/bioinfcore/ActiveProjects/Lukacs_nlukacs_CU2-Multiome_ncarruth_rcavalca_12540-AE/input/Seq/10x_analysis_12540-AE/Sample_12540-AE-2		
+S3	/nfs/mm-isilon/bioinfcore/ActiveProjects/Lukacs_nlukacs_CU2-Multiome_ncarruth_rcavalca_12540-AE/input/Seq/10x_analysis_12540-AE/Sample_12540-AE-3		
+S4	/nfs/mm-isilon/bioinfcore/ActiveProjects/Lukacs_nlukacs_CU2-Multiome_ncarruth_rcavalca_12540-AE/input/Seq/10x_analysis_12540-AE/Sample_12540-AE-4		
+S5	/nfs/mm-isilon/bioinfcore/ActiveProjects/Lukacs_nlukacs_CU2-Multiome_ncarruth_rcavalca_12540-AE/input/Seq/10x_analysis_12540-AE/Sample_12540-AE-5		
+S6	/nfs/mm-isilon/bioinfcore/ActiveProjects/Lukacs_nlukacs_CU2-Multiome_ncarruth_rcavalca_12540-AE/input/Seq/10x_analysis_12540-AE/Sample_12540-AE-6		
