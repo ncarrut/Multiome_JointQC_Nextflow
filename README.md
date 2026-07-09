@@ -13,6 +13,7 @@ This workflow runs the `joint_qc.py` script to generate joint RNA/ATAC QC plots.
 Required parameters:
 - `--params-file` : json file listing sample RNA and ATAC data locations for each sample (see library-config.json)
 - `--outdir` : output directory for results (default: `results`)
+- `--filter_MT_ATAC` : whether to filter ATAC nuclei on a %chrMT threshold (default: `false`)
 
 ## Run
 
@@ -28,6 +29,7 @@ Results are written to `--outdir/`:
 - `<sample_id>_qcPlot.png`
 - `<sample_id>_upsetPlot.png`
 - `<sample_id>_metrics.txt`
+- `<sample_id>_joint_qc.log`
 
 ## Container
 

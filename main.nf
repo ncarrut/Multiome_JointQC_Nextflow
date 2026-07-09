@@ -2,11 +2,6 @@
 
 nextflow.enable.dsl=2
 
-params.sample_id = null
-params.rna_results_dir = null
-params.atac_results_dir = null
-params.outdir = "results"
-
 process JOINT_QC {
     tag "${sample_id}"
     memory '32 GB'
@@ -19,6 +14,7 @@ process JOINT_QC {
         path "${sample_id}_qcPlot.png", emit: qc_plot
         path "${sample_id}_upsetPlot.png", emit: upset_plot
         path "${sample_id}_metrics.txt", emit: metrics
+        path "${sample_id}_joint_qc.log", emit: log
 
     script:
     """
@@ -28,9 +24,11 @@ process JOINT_QC {
         --ATAC_results_dir ${atac_results_dir} \\
         --RNA_BARCODE_WHITELIST ${baseDir}/737K-arc-v1-rna.txt \\
         --ATAC_BARCODE_WHITELIST ${baseDir}/737K-arc-v1-atac.txt \\
+        --filter_MT_ATAC ${params.filter_MT_ATAC} \\
         --qcPlot ${sample_id}_qcPlot.png \\
         --upsetPlot ${sample_id}_upsetPlot.png \\
-        --outmetrics ${sample_id}_metrics.txt
+        --outmetrics ${sample_id}_metrics.txt \\
+        --outlogs ${sample_id}_joint_qc.log
     """
 }
 
