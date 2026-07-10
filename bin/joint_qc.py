@@ -11,21 +11,14 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import seaborn as sns
-import tables
-import anndata
-from typing import Dict, Optional
 import numpy as np
-import scipy.sparse as sp
-from scipy import io
-import glob
 import os
 import upsetplot
-from scipy.io import mmread
-import csv
 
 import argparse
 
 from helper_joint_qc import *
+from rna_core import compute_rna_metrics
 
 from logging_config import setup_logging
 import logging
@@ -61,142 +54,36 @@ logger = logging.getLogger(__name__)
 
 # ---inputs---
 donor = args.sample
-logger.info(f"Sample name: {donor}")
 RNA_results_dir = str(args.RNA_results_dir)
-logger.info(f"Input dir for RNA: {RNA_results_dir}")
 ATAC_results_dir = args.ATAC_results_dir
 logger.info(f"Input dir for ATAC: {ATAC_results_dir}")
 RNA_BARCODE_WHITELIST = args.RNA_BARCODE_WHITELIST
 ATAC_BARCODE_WHITELIST = args.ATAC_BARCODE_WHITELIST
 
-CELLBENDER = RNA_results_dir+'cellbender/'+donor+'-hg38.cellbender_FPR_0.05.h5'
-
-RNA_METRICS = RNA_results_dir+'qc/'+donor+'-hg38.qc.txt'
-ATAC_METRICS = ATAC_results_dir+'ataqv/single-nucleus/'+donor+'-hg38.txt'
-GENE_FULL_EXON_OVER_INTRON_COUNTS = RNA_results_dir + 'starsolo/' + donor + '-hg38/' + donor + '-hg38.Solo.out/GeneFull_ExonOverIntron/raw'
-GENE_COUNTS = RNA_results_dir + 'starsolo/' + donor + '-hg38/' + donor + '-hg38.Solo.out/Gene/raw'
-knee = RNA_results_dir + 'emptyDrops/' + donor + '-hg38.knee.txt'
-passQC = RNA_results_dir + 'emptyDrops/' + donor + '-hg38.pass.txt'
-
-# ---upfront thresholds--- 
-THRESHOLD_CELLBENDER_MIN_CELL_PROBABILITY = 0.99
+# ---upfront thresholds---
 THRESHOLD_ATAC_MIN_TSS_ENRICHMENT = 2
 
-# ---process inputs---
+# ---process RNA-side inputs and compute RNA thresholds/filters---
+metrics, thresholds, knee_plot_info = compute_rna_metrics(donor, RNA_results_dir, assay="multiome")
+
+THRESHOLD_RNA_MIN_UMI = thresholds["rna_min_umi"]
+THRESHOLD_FRACTION_CB_REMOVED = thresholds["fraction_cb_removed"]
+THRESHOLD_RNA_MAX_MITO = thresholds["rna_max_mito"]
+THRESHOLD_EXON_GENE_BODY_RATIO = thresholds["exon_gene_body_ratio"]
+
+knee = knee_plot_info["knee"]
+inflection = knee_plot_info["inflection"]
+end_cliff = knee_plot_info["end_cliff"]
+plateau = knee_plot_info["plateau"]
+n_peaks_knee_plot = knee_plot_info["n_peaks_knee_plot"]
+
 ## ATAC --> RNA barcode mappings
 rna_barcodes = pd.read_csv(RNA_BARCODE_WHITELIST, header=None)[0].to_list()
 atac_barcodes = pd.read_csv(ATAC_BARCODE_WHITELIST, header=None)[0].to_list()
 atac_to_rna = dict(zip(atac_barcodes, rna_barcodes))
 
-## load metrics df
-adata = anndata_from_h5(CELLBENDER, analyzed_barcodes_only=True)
-rna_metrics = pd.read_csv(RNA_METRICS, sep='\t')
-rna_metrics = rna_metrics[rna_metrics.barcode!='-']
-
-## Calculate ratio of exonic vs full gene body reads
-# exons only
-gene_mat = mmread(os.path.join(GENE_COUNTS, 'matrix.mtx'))
-gene_umis_per_barcode = gene_mat.sum(axis=0).tolist()[0]
-
-# includes introns
-gene_full_mat = mmread(os.path.join(GENE_FULL_EXON_OVER_INTRON_COUNTS, 'matrix.mtx'))
-gene_full_umis_per_barcode = gene_full_mat.sum(axis=0).tolist()[0]
-
-barcodes = pd.read_csv(os.path.join(GENE_COUNTS, 'barcodes.tsv'), header=None)[0]
-assert(all(barcodes == pd.read_csv(os.path.join(GENE_FULL_EXON_OVER_INTRON_COUNTS, 'barcodes.tsv'), header=None)[0]))
-
-exon_to_full_gene_body_ratio = pd.DataFrame({'barcode': barcodes, 'gene': gene_umis_per_barcode, 'gene_full': gene_full_umis_per_barcode})
-exon_to_full_gene_body_ratio['exon_to_full_gene_body_ratio'] = exon_to_full_gene_body_ratio.gene / exon_to_full_gene_body_ratio.gene_full
-umis_genefull_exon_over_intron = exon_to_full_gene_body_ratio.set_index('barcode').gene_full.to_dict()
-rna_metrics = rna_metrics.merge(exon_to_full_gene_body_ratio)
-metrics = rna_metrics.set_index('barcode').rename(columns=lambda x: 'rna_' + x)
-
-## cellbender-related statistics
-metrics = metrics.reset_index()
-cell_probability = cellbender_anndata_to_cell_probability(adata)
-post_cellbender_umis = umi_count_after_decontamination(adata)
-
-metrics['cell_probability'] = metrics.barcode.map(lambda x: cell_probability[x] if x in cell_probability else np.nan)
-metrics['post_cellbender_umis'] = metrics.barcode.map(lambda x: post_cellbender_umis[x] if x in post_cellbender_umis else np.nan)
-metrics['fraction_cellbender_removed'] = (metrics.rna_umis - metrics.post_cellbender_umis) / metrics.rna_umis
-metrics['rna_percent_mitochondrial'] = metrics.rna_fraction_mitochondrial * 100
-metrics['pct_cellbender_removed'] = metrics.fraction_cellbender_removed * 100
-metrics['filter_cellbender_cell_probability'] = metrics.cell_probability >= THRESHOLD_CELLBENDER_MIN_CELL_PROBABILITY
-
-### get bc that passed emptydrops analysis
-bc = pd.read_csv(passQC, header=0, delim_whitespace="\t") 
-metrics['filter_rna_emptyDrops'] = metrics['barcode'].isin(bc.barcode)
-
-### load metrics on knee plot
-KNEE_FILE = knee
-with open(KNEE_FILE, 'r') as file:
-    reader = csv.reader(file, delimiter='\t')
-    next(reader, None)
-    for row in reader:
-        knee = round(float(row[0]))
-        inflection = round(float(row[1]))
-        inflection_rank = round(float(row[2]))
-        knee_rank = round(float(row[3]))
-        end_cliff = round(float(row[4]))
-        end_cliff_rank = round(float(row[5]))
-        plateau = round(float(row[6]))
-
-### get bc that passed threshold UMIs obtained using Multi-Otsu
-# try to infer UMI threshold
-MAX_EXPECTED_NUMBER_NUCLEI = round_up(len(metrics[metrics.rna_umis >= inflection]), 3)
-LOWERBOUNDS = np.concatenate(([1, 5], np.arange(10, 251, 10), [300, 350, 400, 450, 500]))
-
-for i in LOWERBOUNDS:
-    UMI_THRESHOLD = estimate_threshold(metrics[(metrics.barcode!='-') & (metrics.rna_umis>=i)].rna_umis.astype(int))
-    NUMBER_MEETING_UMI_THRESHOLD = (metrics.rna_umis>=UMI_THRESHOLD).sum()
-    #allow 1% wiggle room
-    if (NUMBER_MEETING_UMI_THRESHOLD*101/100 <= MAX_EXPECTED_NUMBER_NUCLEI) or (NUMBER_MEETING_UMI_THRESHOLD*99/100 <= MAX_EXPECTED_NUMBER_NUCLEI):
-        break
-
-if (NUMBER_MEETING_UMI_THRESHOLD*101/100 > MAX_EXPECTED_NUMBER_NUCLEI) and (NUMBER_MEETING_UMI_THRESHOLD*99/100 > MAX_EXPECTED_NUMBER_NUCLEI):
-    # just fall back to 500
-    UMI_THRESHOLD = 500
-    NUMBER_MEETING_UMI_THRESHOLD = (metrics.rna_umis>=UMI_THRESHOLD).sum()
-
-THRESHOLD_RNA_MIN_UMI = UMI_THRESHOLD
-metrics['filter_rna_min_umi'] = metrics.rna_umis >= THRESHOLD_RNA_MIN_UMI
-
-# get %ambient vs post CB UMI thresholding
-peaks_cb, n_peaks_cb, cb_kde_df = guess_n_classes_cellbender(metrics)
-THRESHOLD_FRACTION_CB_REMOVED, THRESHOLD_POST_CB_UMIS = get_cellbender_thresholds(metrics, peaks_cb, n_peaks_cb, cb_kde_df)
-
-metrics['filter_pct_cellbender_removed'] = metrics.pct_cellbender_removed <= THRESHOLD_FRACTION_CB_REMOVED*100
-
-
-### get THRESHOLD_EXON_GENE_BODY_RATIO
-import skimage as ski
-from scipy import ndimage as ndi
-x = np.log10(metrics[(metrics.rna_exon_to_full_gene_body_ratio>0)&
-                     (metrics.filter_rna_min_umi ==True)].rna_umis)
-y = metrics[(metrics.rna_exon_to_full_gene_body_ratio>0)&
-            (metrics.filter_rna_min_umi ==True)].rna_exon_to_full_gene_body_ratio
-
-THRESHOLD_EXON_GENE_BODY_RATIO = get_exon_fullgene_ratio(x, y)
-
-if THRESHOLD_EXON_GENE_BODY_RATIO >= 0.95:
-    data = metrics[(metrics.rna_exon_to_full_gene_body_ratio>0)&
-              (metrics.rna_exon_to_full_gene_body_ratio<1.0)].rna_exon_to_full_gene_body_ratio.astype(float).values
-    THRESHOLD_EXON_GENE_BODY_RATIO = threshold_multiotsu(data, classes=3)[1]
-
-### get THRESHOLD_RNA_MAX_MITO
-n_peaks, rna_kde_df = guess_n_classes(metrics, "RNA")
-THRESHOLD_RNA_MAX_MITO = get_chrMT_threshold_RNA(metrics, n_peaks = n_peaks)
-##############################
-
-####### knee plot analysis
-from scipy.interpolate import interp1d
-from scipy.signal import find_peaks, savgol_filter
-
-df_ranked, df_interpolated, n_peaks_knee_plot, final_peak_indices = analyze_knee_plot(metrics, knee, knee_rank, end_cliff, end_cliff_rank, inflection_rank)
-##############################
-
 ### ATAC side ###
-atac_metrics = pd.read_csv(ATAC_METRICS, sep='\t', index_col=0).rename_axis(index='barcode')
+atac_metrics = pd.read_csv(ATAC_results_dir+'ataqv/single-nucleus/'+donor+'-hg38.txt', sep='\t', index_col=0).rename_axis(index='barcode')
 KEEP_ATAC_METRICS = ['median_fragment_length', 'hqaa', 'max_fraction_reads_from_single_autosome', 'percent_mitochondrial', 'tss_enrichment']
 atac_metrics = atac_metrics[KEEP_ATAC_METRICS]
 atac_metrics.max_fraction_reads_from_single_autosome = atac_metrics.max_fraction_reads_from_single_autosome.fillna(0)
@@ -212,17 +99,17 @@ metrics = metrics.set_index('barcode').rename(columns=lambda x: '' + x).join(ata
 # get HQAA threshold
 values = np.log10(atac_metrics[(atac_metrics.tss_enrichment > 2)].hqaa).values
 values = values.reshape((len(values),1))
-thresholds = threshold_multiotsu(image=values, classes=2, nbins=256)
+thresholds_multiotsu = threshold_multiotsu(image=values, classes=2, nbins=256)
 # convert back to linear scale
-thresholds = [pow(10, i) for i in thresholds]
-lower_thres = round(thresholds[0])
+thresholds_multiotsu = [pow(10, i) for i in thresholds_multiotsu]
+lower_thres = round(thresholds_multiotsu[0])
 lower_thres = max(lower_thres, 100)
 values = np.log10(atac_metrics[(atac_metrics.hqaa > lower_thres)].hqaa).values
 values = values.reshape((len(values),1))
-thresholds = threshold_multiotsu(image=values, classes=3, nbins=256)
+thresholds_multiotsu = threshold_multiotsu(image=values, classes=3, nbins=256)
 # convert back to linear scale
-thresholds = [pow(10, i) for i in thresholds]
-THRESHOLD_ATAC_MIN_HQAA = round(thresholds[1])
+thresholds_multiotsu = [pow(10, i) for i in thresholds_multiotsu]
+THRESHOLD_ATAC_MIN_HQAA = round(thresholds_multiotsu[1])
 
 metrics['filter_atac_min_hqaa'] = metrics.atac_hqaa >= THRESHOLD_ATAC_MIN_HQAA
 
@@ -233,10 +120,7 @@ if (args.filter_MT_ATAC == True):
 
 
 
-### get cells that passed all thresholds; those that passed post-CB nUMIs have been identified above
-metrics['filter_cellbender_cell_probability'] = metrics.cell_probability >= THRESHOLD_CELLBENDER_MIN_CELL_PROBABILITY
-metrics['filter_rna_max_mito'] = metrics.rna_percent_mitochondrial <= THRESHOLD_RNA_MAX_MITO
-metrics['filter_rna_exon_to_full_gene_body_ratio'] = metrics.rna_exon_to_full_gene_body_ratio <= THRESHOLD_EXON_GENE_BODY_RATIO
+### get cells that passed all thresholds; RNA-side filters were already assigned by compute_rna_metrics()
 metrics['filter_atac_min_hqaa'] = metrics.atac_hqaa >= THRESHOLD_ATAC_MIN_HQAA
 metrics['filter_atac_min_tss_enrichment'] = metrics.atac_tss_enrichment >= THRESHOLD_ATAC_MIN_TSS_ENRICHMENT
 if (args.filter_MT_ATAC == True):
@@ -244,64 +128,10 @@ if (args.filter_MT_ATAC == True):
 metrics['pass_all_filters'] = metrics.filter(like='filter_').all(axis=1)
 
 # to collect all Thresholds here
-def log_thresholds(thresholds):
-    """
-    Log all computed QC thresholds in a clearly formatted summary.
-
-    Parameters
-    ----------
-    thresholds : dict
-        Dictionary mapping threshold names to their computed values.
-        Expected keys:
-        - rna_min_umi
-        - fraction_cb_removed
-        - rna_max_mito
-        - exon_gene_body_ratio
-        - atac_min_hqaa
-        - atac_min_tss_enrichment
-        - atac_max_mito
-    """
-    header = "Computed QC Thresholds"
-    separator = "=" * 50
-
-    lines = [
-        "",
-        separator,
-        f"  {header}",
-        separator,
-    ]
-
-    for name, value in thresholds.items():
-        formatted_name = name.upper()
-        if isinstance(value, float):
-            lines.append(f"  {formatted_name:<30} = {value:,.2f}")
-        else:
-            lines.append(f"  {formatted_name:<30} = {value:,}")
-
-    lines.append(separator)
-    lines.append("")
-
-    logger.info("\n".join(lines))
-
+thresholds["atac_min_hqaa"] = THRESHOLD_ATAC_MIN_HQAA
+thresholds["atac_min_tss_enrichment"] = THRESHOLD_ATAC_MIN_TSS_ENRICHMENT
 if (args.filter_MT_ATAC == True):
-    thresholds = {
-        "rna_min_umi": THRESHOLD_RNA_MIN_UMI,
-        "fraction_cb_removed": THRESHOLD_FRACTION_CB_REMOVED,
-        "rna_max_mito": THRESHOLD_RNA_MAX_MITO,
-        "exon_gene_body_ratio": THRESHOLD_EXON_GENE_BODY_RATIO,
-        "atac_min_hqaa": THRESHOLD_ATAC_MIN_HQAA,
-        "atac_min_tss_enrichment": THRESHOLD_ATAC_MIN_TSS_ENRICHMENT,
-        "atac_max_mito": THRESHOLD_ATAC_MAX_MITO,
-        }
-else:
-    thresholds = {
-        "rna_min_umi": THRESHOLD_RNA_MIN_UMI,
-        "fraction_cb_removed": THRESHOLD_FRACTION_CB_REMOVED,
-        "rna_max_mito": THRESHOLD_RNA_MAX_MITO,
-        "exon_gene_body_ratio": THRESHOLD_EXON_GENE_BODY_RATIO,
-        "atac_min_hqaa": THRESHOLD_ATAC_MIN_HQAA,
-        "atac_min_tss_enrichment": THRESHOLD_ATAC_MIN_TSS_ENRICHMENT
-        }
+    thresholds["atac_max_mito"] = THRESHOLD_ATAC_MAX_MITO
 
 log_thresholds(thresholds)
 
@@ -321,7 +151,7 @@ ax.axhline(knee, color='red', ls='--', label='knee={:,}'.format(knee))
 ax.axhline(inflection, color='green', ls='--', label='inflection={:,}'.format(inflection))
 ax.axhline(end_cliff, color='blue', ls='--', label='end_cliff={:,}'.format(end_cliff))
 ax.axhline(plateau, color='orange', ls='--', label='plateau={:,}'.format(plateau))
-ax.set_title('Inferred n knees = {:,}'.format(n_peaks_knee_plot)) 
+ax.set_title('Inferred n knees = {:,}'.format(n_peaks_knee_plot))
 ax.legend()
 
 ax = axs[0, 1]
@@ -389,5 +219,4 @@ upsetplot.plot(for_upset, fig=fig, sort_by='cardinality', show_counts=True)
 fig.savefig(args.upsetPlot, bbox_inches='tight', dpi=300)
 
 
-metrics.to_csv(args.outmetrics, index=False) 
-
+metrics.to_csv(args.outmetrics, index=False)

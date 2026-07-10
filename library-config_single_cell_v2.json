@@ -1,0 +1,24 @@
+{
+    "libraries": {
+        "362C": {
+            "assay": "scRNA",
+            "RNA_results_dir": "/nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Kedlian_2024/single_cell/results_v2/"
+        },
+        "367C": {
+            "assay": "scRNA",
+            "RNA_results_dir": "/nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Kedlian_2024/single_cell/results_v2/"
+        },
+        "411C": {
+            "assay": "scRNA",
+            "RNA_results_dir": "/nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Kedlian_2024/single_cell/results_v2/"
+        },
+        "464C": {
+            "assay": "scRNA",
+            "RNA_results_dir": "/nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Kedlian_2024/single_cell/results_v2/"
+        },
+        "470BR": {
+            "assay": "scRNA",
+            "RNA_results_dir": "/nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Kedlian_2024/single_cell/results_v2/"
+        }
+    }
+}

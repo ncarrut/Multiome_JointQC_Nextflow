@@ -12,6 +12,13 @@
 module load openjdk/18.0.1.1
 module load singularity/4.4.1
 
-exec nextflow run -resume main.nf \
-  --params-file /nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Rubenstein_2025/Multiome_QC/Multiome_JointQC_Nextflow/library-config.json
-  --outdir /nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Rubenstein_2025/Multiome_QC/results
+BASE_DIR=/nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Kedlian_2024/Multiome_QC/Multiome_JointQC_Nextflow
+
+# Sample IDs repeat across data types/chemistries (e.g. donor 362C was profiled
+# as both scRNA and snRNA), so each config is run separately into its own
+# outdir to avoid output filename collisions.
+for config in single_cell_v2 single_cell_v3 single_nuclei_v2 single_nuclei_v3 single_nuclei_mixed; do
+    nextflow run "${BASE_DIR}/main.nf" \
+        -params-file "${BASE_DIR}/library-config_${config}.json" \
+        --outdir "${BASE_DIR}/../results/${config}"
+done
