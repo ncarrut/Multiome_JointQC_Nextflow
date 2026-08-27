@@ -25,7 +25,18 @@ import csv
 
 import argparse
 
-from helper_joint_qc import *
+# import helper functions
+try:
+    from helper_joint_qc import *
+except ModuleNotFoundError as error:
+    if error.name == "helper_joint_qc":
+        raise SystemExit(
+            "Error: Could not find the 'helper_joint_qc' module. "
+            "Run this script from the directory containing 'helper_joint_qc.py', "
+            "or add that directory's absolute path to Python's module search path "
+            "(sys.path or PYTHONPATH)."
+        ) from error
+    raise
 
 from logging_config import setup_logging
 import logging
@@ -41,27 +52,21 @@ def str2bool(v):
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
 parser = argparse.ArgumentParser("Plot QC metrics per sample")
-parser.add_argument("--sample", help="Sample ID.", type=str)
+parser.add_argument("--sample", help="Sample ID. Example: 14806-AH-10-hg38, i.e. `<library name>-<genome>`.", type=str)
 parser.add_argument("--RNA_results_dir", help="Path to RNA results directory.", type=str)
 parser.add_argument("--ATAC_results_dir", help="Path to ATAC results directory.", type=str)
 parser.add_argument("--RNA_BARCODE_WHITELIST", help="Path to RNA barcode whitelist.", type=str)
 parser.add_argument("--ATAC_BARCODE_WHITELIST", help="Path to ATAC barcode whitelist.", type=str)
 parser.add_argument("--filter_MT_ATAC", help="Whether to filter ATAC nuclei based on %chrMT threshold. Default: False.", type=str2bool, default=False)
-parser.add_argument("--qcPlot", help="Path to save qcPlot plots.", type=str)
-parser.add_argument("--upsetPlot", help="Path to save upset plots.", type=str)
-parser.add_argument("--outmetrics", help="Path to save all metrics results.", type=str)
-parser.add_argument("--outlogs", help="Path to save log messages.", type=str)
+parser.add_argument("--lower", help="Read number threshold, a barcode with less than this number is considered empty. Used for min HQAA detection.", type=float, default=100)
+parser.add_argument("--output", help="Path to save QC plots and metrics.", type=str)
 
 
 args = parser.parse_args()
 
-# save logs
-setup_logging(log_file=args.outlogs, level=logging.DEBUG)
-logger = logging.getLogger(__name__)
-
 # ---inputs---
-donor = args.sample
-logger.info(f"Sample name: {donor}")
+sample = args.sample
+logger.info(f"Sample name: {sample}")
 RNA_results_dir = str(args.RNA_results_dir)
 logger.info(f"Input dir for RNA: {RNA_results_dir}")
 ATAC_results_dir = args.ATAC_results_dir
@@ -69,14 +74,48 @@ logger.info(f"Input dir for ATAC: {ATAC_results_dir}")
 RNA_BARCODE_WHITELIST = args.RNA_BARCODE_WHITELIST
 ATAC_BARCODE_WHITELIST = args.ATAC_BARCODE_WHITELIST
 
-CELLBENDER = RNA_results_dir+'cellbender/'+donor+'-hg38.cellbender_FPR_0.05.h5'
+# --- define output files---
+output = args.output
+qcPlot = output+"/"+sample+".qcPlot.png"
+upsetPlot = output+"/"+sample+".upsetPlot.png"
+outmetrics = output+"/"+sample+".outmetrics.csv"
+outlogs = output+"/"+sample+".log"
+if not os.path.isdir(output):
+    raise FileNotFoundError(f"Directory does not exist: {output}.")
 
-RNA_METRICS = RNA_results_dir+'qc/'+donor+'-hg38.qc.txt'
-ATAC_METRICS = ATAC_results_dir+'ataqv/single-nucleus/'+donor+'-hg38.txt'
-GENE_FULL_EXON_OVER_INTRON_COUNTS = RNA_results_dir + 'starsolo/' + donor + '-hg38/' + donor + '-hg38.Solo.out/GeneFull_ExonOverIntron/raw'
-GENE_COUNTS = RNA_results_dir + 'starsolo/' + donor + '-hg38/' + donor + '-hg38.Solo.out/Gene/raw'
-knee = RNA_results_dir + 'emptyDrops/' + donor + '-hg38.knee.txt'
-passQC = RNA_results_dir + 'emptyDrops/' + donor + '-hg38.pass.txt'
+# save logs
+setup_logging(log_file=outlogs, level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+# sanity check input files
+CELLBENDER = RNA_results_dir+'/cellbender/'+sample+'.cellbender_FPR_0.05.h5'
+if not os.path.isfile(CELLBENDER):
+    raise FileNotFoundError(f"File does not exist: {CELLBENDER}.")
+
+RNA_METRICS = RNA_results_dir+'/qc/'+sample+'.qc.txt'
+if not os.path.isfile(RNA_METRICS):
+    raise FileNotFoundError(f"File does not exist: {RNA_METRICS}.")
+
+ATAC_METRICS = ATAC_results_dir+'/ataqv/single-nucleus/'+sample+'.txt'
+if not os.path.isfile(ATAC_METRICS):
+    raise FileNotFoundError(f"File does not exist: {ATAC_METRICS}.")
+
+GENE_FULL_EXON_OVER_INTRON_COUNTS = RNA_results_dir + 'starsolo/' + sample + '/' + sample + '.Solo.out/GeneFull_ExonOverIntron/raw'
+if not os.path.isdir(GENE_FULL_EXON_OVER_INTRON_COUNTS):
+    raise FileNotFoundError(f"Directory does not exist: {GENE_FULL_EXON_OVER_INTRON_COUNTS}.")
+
+GENE_COUNTS = RNA_results_dir + 'starsolo/' + sample + '/' + sample + '.Solo.out/Gene/raw'
+if not os.path.isdir(GENE_COUNTS):
+    raise FileNotFoundError(f"Directory does not exist: {GENE_COUNTS}.")
+
+knee = RNA_results_dir + 'emptyDrops/' + sample + '.knee.txt'
+if not os.path.isfile(knee):
+    raise FileNotFoundError(f"File does not exist: {knee}.")
+
+passQC = RNA_results_dir + 'emptyDrops/' + sample + '.pass.txt'
+if not os.path.isfile(passQC):
+    raise FileNotFoundError(f"File does not exist: {passQC}.")
+
 
 # ---upfront thresholds--- 
 THRESHOLD_CELLBENDER_MIN_CELL_PROBABILITY = 0.99
@@ -216,7 +255,7 @@ thresholds = threshold_multiotsu(image=values, classes=2, nbins=256)
 # convert back to linear scale
 thresholds = [pow(10, i) for i in thresholds]
 lower_thres = round(thresholds[0])
-lower_thres = max(lower_thres, 100)
+lower_thres = max(lower_thres, args.lower)
 values = np.log10(atac_metrics[(atac_metrics.hqaa > lower_thres)].hqaa).values
 values = values.reshape((len(values),1))
 thresholds = threshold_multiotsu(image=values, classes=3, nbins=256)
@@ -326,13 +365,13 @@ ax.legend()
 
 ax = axs[0, 1]
 rna_umis_vs_rna_mito_plot(metrics, ax)
-ax.axhline(THRESHOLD_RNA_MAX_MITO/100, color='blue', ls='--', label='THRESHOLD_RNA_MAX_MITO = {:,}'.format(THRESHOLD_RNA_MAX_MITO))
+ax.axhline(THRESHOLD_RNA_MAX_MITO/100, color='blue', ls='--', label='max RNA %chrMT = {:,}'.format(THRESHOLD_RNA_MAX_MITO))
 ax.axvline(THRESHOLD_RNA_MIN_UMI, color='red', ls='--')
 ax.legend()
 
 ax = axs[0, 2]
 cellbender_fraction_removed(metrics, ax)
-ax.axhline(THRESHOLD_FRACTION_CB_REMOVED, color='blue', ls='--')
+ax.axhline(THRESHOLD_FRACTION_CB_REMOVED, color='blue', ls='--', label='%ambient removed threshold Multi-otsu= {:,}'.format(THRESHOLD_FRACTION_CB_REMOVED))
 
 ax = axs[1, 0]
 sns.histplot(x='pct_cellbender_removed', data=metrics[(metrics.pct_cellbender_removed > 5) &
@@ -359,7 +398,7 @@ ax.axvline(THRESHOLD_RNA_MIN_UMI, color='red', ls='--')
 
 ax = axs[2, 1]
 atac_hqaa_vs_atac_tss_enrichment_plot(metrics, ax, alpha=0.02)
-ax.axvline(THRESHOLD_ATAC_MIN_HQAA, color='red', ls='--', label='THRESHOLD_ATAC_MIN_HQAA = {:,}'.format(THRESHOLD_ATAC_MIN_HQAA))
+ax.axvline(THRESHOLD_ATAC_MIN_HQAA, color='red', ls='--', label='min ATAC HQAA = {:,}'.format(THRESHOLD_ATAC_MIN_HQAA))
 ax.axhline(THRESHOLD_ATAC_MIN_TSS_ENRICHMENT, color='red', ls='--')
 ax.legend()
 
@@ -371,13 +410,13 @@ ax = axs[2, 2]
 atac_hqaa_vs_atac_mt_pct_plot(metrics, ax, alpha=0.02)
 ax.axvline(THRESHOLD_ATAC_MIN_HQAA, color='red', ls='--')
 if (args.filter_MT_ATAC == True):
-    ax.axhline(THRESHOLD_ATAC_MAX_MITO, color='green', ls='--', label='THRESHOLD_ATAC_MAX_MITO = {:,}'.format(THRESHOLD_ATAC_MAX_MITO))
+    ax.axhline(THRESHOLD_ATAC_MAX_MITO, color='green', ls='--', label='max ATAC %chrMT = {:,}'.format(THRESHOLD_ATAC_MAX_MITO))
 ax.legend()
 
 
-fig.suptitle('{:,} pass QC nuclei'.format(len(pass_qc_nuclei)) + " " + donor)
+fig.suptitle('{:,} pass QC nuclei'.format(len(pass_qc_nuclei)) + " " + sample)
 fig.tight_layout()
-fig.savefig(args.qcPlot, bbox_inches='tight', dpi=300)
+fig.savefig(qcPlot, bbox_inches='tight', dpi=300)
 
 # Plot the number of cells passing each filter
 fig, ax = plt.subplots(figsize=(7, 6))
@@ -386,8 +425,8 @@ ax.remove()
 for_upset = metrics.filter(like='filter_').rename(columns=lambda x: 'pass_' + x)
 for_upset = for_upset.groupby(for_upset.columns.to_list()).size()
 upsetplot.plot(for_upset, fig=fig, sort_by='cardinality', show_counts=True)
-fig.savefig(args.upsetPlot, bbox_inches='tight', dpi=300)
+fig.savefig(upsetPlot, bbox_inches='tight', dpi=300)
 
 
-metrics.to_csv(args.outmetrics, index=False) 
+metrics.to_csv(outmetrics, index=False) 
 

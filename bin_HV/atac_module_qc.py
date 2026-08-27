@@ -54,6 +54,7 @@ def str2bool(v):
 parser = argparse.ArgumentParser("Plot QC metrics per sample for snATAC-seq data.")
 parser.add_argument("--sample", help="Sample ID. Example: 14806-AH-10-hg38, i.e. `<library name>-<genome>`.", type=str)
 parser.add_argument("--ATAC_results_dir", help="Path to ATAC results directory. Path should have subdirectories with upstream analyses such as `ataqv`.", type=str)
+parser.add_argument("--lower", help="Read number threshold, a barcode with less than this number is considered empty. Used for min HQAA detection.", type=float, default=100)
 parser.add_argument("--filter_MT_ATAC", help="Whether to filter ATAC nuclei based on %chrMT threshold. Default: True.", type=str2bool, default=True)
 parser.add_argument("--filter_max_frac_auto_ATAC", help="Whether to filter ATAC nuclei based on maximum fraction of autosomal reads derived from a single autosome threshold. Default: True.", type=str2bool, default=True)
 parser.add_argument("--output", help="Path to save QC plots and metrics.", type=str)
@@ -74,6 +75,8 @@ qcPlot = output+"/"+sample+".qcPlot.png"
 upsetPlot = output+"/"+sample+".upsetPlot.png"
 outmetrics = output+"/"+sample+".outmetrics.csv"
 outlogs = output+"/"+sample+".log"
+if not os.path.isfile(output):
+    raise FileNotFoundError(f"Directory does not exist: {output}.")
 
 # save logs
 setup_logging(log_file=outlogs, level=logging.DEBUG)
@@ -99,7 +102,7 @@ atac_metrics['fraction_mitochondrial'] = atac_metrics.percent_mitochondrial / 10
 metrics = atac_metrics.rename(columns=lambda x: 'atac_' + x)
 
 # get HQAA threshold
-values = np.log10(atac_metrics[atac_metrics.hqaa>100].hqaa).values
+values = np.log10(atac_metrics[atac_metrics.hqaa > args.lower].hqaa).values
 values = values.reshape((len(values),1))
 thresholds = threshold_multiotsu(image=values, classes=3, nbins=256)
 # convert back to linear scale

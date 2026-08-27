@@ -6,7 +6,7 @@ import argparse
 
 
 parser = argparse.ArgumentParser("Plot QC metrics per sample")
-parser.add_argument("--sample", help="Donor ID.", type=str)
+parser.add_argument("--sample", help="Sample ID.", type=str)
 
 
 def setup_logging(log_file="logs", level=logging.DEBUG):
