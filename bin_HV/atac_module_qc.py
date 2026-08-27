@@ -25,7 +25,18 @@ import csv
 
 import argparse
 
-from helper_joint_qc import *
+# import helper functions
+try:
+    from helper_joint_qc import *
+except ModuleNotFoundError as error:
+    if error.name == "helper_joint_qc":
+        raise SystemExit(
+            "Error: Could not find the 'helper_joint_qc' module. "
+            "Run this script from the directory containing 'helper_joint_qc.py', "
+            "or add that directory's absolute path to Python's module search path "
+            "(sys.path or PYTHONPATH)."
+        ) from error
+    raise
 
 from logging_config import setup_logging
 import logging
@@ -40,34 +51,42 @@ def str2bool(v):
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
-parser = argparse.ArgumentParser("Plot QC metrics per sample")
-parser.add_argument("--sample", help="Sample ID.", type=str)
-parser.add_argument("--ATAC_results_dir", help="Path to ATAC results directory.", type=str)
+parser = argparse.ArgumentParser("Plot QC metrics per sample for snATAC-seq data.")
+parser.add_argument("--sample", help="Sample ID. Example: 14806-AH-10-hg38, i.e. `<library name>-<genome>`.", type=str)
+parser.add_argument("--ATAC_results_dir", help="Path to ATAC results directory. Path should have subdirectories with upstream analyses such as `ataqv`.", type=str)
 parser.add_argument("--filter_MT_ATAC", help="Whether to filter ATAC nuclei based on %chrMT threshold. Default: True.", type=str2bool, default=True)
-parser.add_argument("--qcPlot", help="Path to save qcPlot plots.", type=str)
-parser.add_argument("--upsetPlot", help="Path to save upset plots.", type=str)
-parser.add_argument("--outmetrics", help="Path to save all metrics results.", type=str)
-parser.add_argument("--outlogs", help="Path to save log messages.", type=str)
+parser.add_argument("--filter_max_frac_auto_ATAC", help="Whether to filter ATAC nuclei based on maximum fraction of autosomal reads derived from a single autosome threshold. Default: True.", type=str2bool, default=True)
+parser.add_argument("--output", help="Path to save QC plots and metrics.", type=str)
 
 
 args = parser.parse_args()
 
-# save logs
-setup_logging(log_file=args.outlogs, level=logging.DEBUG)
-logger = logging.getLogger(__name__)
-
 # ---inputs---
-donor = args.sample
-logger.info(f"Sample name: {donor}")
+sample = args.sample
+logger.info(f"Sample name: {sample}")
 ATAC_results_dir = args.ATAC_results_dir
 logger.info(f"Input dir for ATAC: {ATAC_results_dir}")
-ATAC_METRICS = ATAC_results_dir+'ataqv/single-nucleus/'+donor+'.txt'
+ATAC_METRICS = ATAC_results_dir+'/ataqv/single-nucleus/'+sample+'.txt'
+
+# --- define output files---
+output = args.output
+qcPlot = output+"/"+sample+".qcPlot.png"
+upsetPlot = output+"/"+sample+".upsetPlot.png"
+outmetrics = output+"/"+sample+".outmetrics.csv"
+outlogs = output+"/"+sample+".log"
+
+# save logs
+setup_logging(log_file=outlogs, level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # ---upfront thresholds--- 
 THRESHOLD_ATAC_MIN_TSS_ENRICHMENT = 2
 
 # ---process inputs---
 ### ATAC side ###
+if not os.path.isfile(ATAC_METRICS):
+    raise FileNotFoundError(f"File does not exist: {ATAC_METRICS}.")
+
 atac_metrics = pd.read_csv(ATAC_METRICS, sep='\t', index_col=0).rename_axis(index='barcode')
 KEEP_ATAC_METRICS = ['median_fragment_length', 'hqaa', 'max_fraction_reads_from_single_autosome', 'percent_mitochondrial', 'tss_enrichment']
 atac_metrics = atac_metrics[KEEP_ATAC_METRICS]
@@ -93,15 +112,19 @@ metrics['filter_atac_min_hqaa'] = metrics.atac_hqaa >= THRESHOLD_ATAC_MIN_HQAA
 if (args.filter_MT_ATAC == True):
     n_peaks, atac_kde_df = guess_n_classes(metrics, "ATAC")
     THRESHOLD_ATAC_MAX_MITO = get_chrMT_threshold_ATAC(metrics, n_peaks = n_peaks)
+    logger.info(f"THRESHOLD_ATAC_MAX_MITO = {THRESHOLD_ATAC_MAX_MITO}")
 
-THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME, n_peaks, kde_df = get_atac_max_autosome_threshold(metrics)
-logger.info(f"THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME = {THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME}")
+### get THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME
+if (args.filter_max_frac_auto_ATAC == True):
+    THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME, n_peaks, kde_df = get_atac_max_autosome_threshold(metrics)
+    logger.info(f"THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME = {THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME}")
 
 
 ### get cells that passed all thresholds; those that passed post-CB nUMIs have been identified above
 metrics['filter_atac_min_hqaa'] = metrics.atac_hqaa >= THRESHOLD_ATAC_MIN_HQAA
 metrics['filter_atac_min_tss_enrichment'] = metrics.atac_tss_enrichment >= THRESHOLD_ATAC_MIN_TSS_ENRICHMENT
-metrics['filter_max_fraction_reads_from_single_autosome'] = metrics.atac_max_fraction_reads_from_single_autosome <= THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME/100
+if (args.filter_max_frac_auto_ATAC == True):
+    metrics['filter_max_fraction_reads_from_single_autosome'] = metrics.atac_max_fraction_reads_from_single_autosome <= THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME/100
 if (args.filter_MT_ATAC == True):
     metrics['filter_atac_max_mito'] = metrics.atac_percent_mitochondrial <= THRESHOLD_ATAC_MAX_MITO
 metrics['pass_all_filters'] = metrics.filter(like='filter_').all(axis=1)
@@ -146,19 +169,16 @@ def log_thresholds(thresholds):
 
     logger.info("\n".join(lines))
 
+thresholds = {
+        "atac_min_hqaa": THRESHOLD_ATAC_MIN_HQAA,
+        "atac_min_tss_enrichment": THRESHOLD_ATAC_MIN_TSS_ENRICHMENT
+        }
+
 if (args.filter_MT_ATAC == True):
-    thresholds = {
-        "atac_min_hqaa": THRESHOLD_ATAC_MIN_HQAA,
-        "atac_min_tss_enrichment": THRESHOLD_ATAC_MIN_TSS_ENRICHMENT,
-        "atac_max_mito": THRESHOLD_ATAC_MAX_MITO,
-        "atac_max_frac_reads_from_single_autosome": THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME
-        }
-else:
-    thresholds = {
-        "atac_min_hqaa": THRESHOLD_ATAC_MIN_HQAA,
-        "atac_min_tss_enrichment": THRESHOLD_ATAC_MIN_TSS_ENRICHMENT,
-        "atac_max_frac_reads_from_single_autosome": THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME
-        }
+    thresholds["atac_max_mito"] = (THRESHOLD_ATAC_MAX_MITO)
+
+if (args.filter_max_frac_auto_ATAC == True):
+    thresholds["atac_max_frac_reads_from_single_autosome"] = (THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME)
 
 log_thresholds(thresholds)
 
@@ -168,24 +188,25 @@ metrics = metrics.reset_index()
 # List of pass-QC barcodes
 pass_qc_nuclei = list(sorted(metrics[metrics.pass_all_filters].barcode.to_list()))
 
-
-# Plot QC metrics #to work on plotting
 # Plot QC metrics
 fig, axs = plt.subplots(ncols=2, nrows=2, figsize=(2*4, 2*4))
 
 ax=axs[0, 0]
 atac_hqaa_vs_atac_tss_enrichment_plot(metrics, ax, alpha=0.02, s=3)
-ax.axvline(THRESHOLD_ATAC_MIN_HQAA, color='red', ls='--', label='THRESHOLD_ATAC_MIN_HQAA = {:,}'.format(THRESHOLD_ATAC_MIN_HQAA))
-ax.axhline(THRESHOLD_ATAC_MIN_TSS_ENRICHMENT, color='red', ls='--')
+ax.axvline(THRESHOLD_ATAC_MIN_HQAA, color='red', ls='--', label='Min HQAA = {:,}'.format(THRESHOLD_ATAC_MIN_HQAA))
+ax.axhline(THRESHOLD_ATAC_MIN_TSS_ENRICHMENT, color='blue', ls='--', label='Min TSS enrichment = {:,}'.format(THRESHOLD_ATAC_MIN_TSS_ENRICHMENT))
+ax.legend()
 
 ax=axs[0, 1]
 barcode_rank_plot_atac(metrics, ax, alpha=0.02, s=3)
-ax.axhline(THRESHOLD_ATAC_MIN_HQAA, color='red', ls='--')
+ax.axhline(THRESHOLD_ATAC_MIN_HQAA, color='red', ls='--', label='Min HQAA')
+ax.legend()
 
 ax=axs[1, 0]
 atac_hqaa_vs_atac_mt_pct_plot(metrics, ax, alpha=0.02, s=3)
-ax.axvline(THRESHOLD_ATAC_MIN_HQAA, color='red', ls='--')
-ax.axhline(THRESHOLD_ATAC_MAX_MITO, color='red', ls='--', label='THRESHOLD_ATAC_MAX_MITO = {:,}'.format(THRESHOLD_ATAC_MAX_MITO))
+ax.axvline(THRESHOLD_ATAC_MIN_HQAA, color='red', ls='--', label='Min HQAA')
+if (args.filter_MT_ATAC == True):
+    ax.axhline(THRESHOLD_ATAC_MAX_MITO, color='blue', ls='--', label='Max %chrMT = {:,}'.format(THRESHOLD_ATAC_MAX_MITO))
 ax.legend()
 
 ax=axs[1, 1]
@@ -193,13 +214,14 @@ sns.scatterplot(x='atac_hqaa', y='atac_max_fraction_reads_from_single_autosome',
 ax.set_xscale('log')
 ax.set_xlabel('HQAA')
 ax.set_ylabel('Max fraction reads from single autosome')
-ax.axvline(THRESHOLD_ATAC_MIN_HQAA, ls='--')
-ax.axhline(THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME/100, ls='--', label='MAX_FRAC_READS_FROM_SINGLE_AUTOSOME = {:,}'.format(THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME/100))
+ax.axvline(THRESHOLD_ATAC_MIN_HQAA, color='red', ls='--', label='Min HQAA')
+if (args.filter_max_frac_auto_ATAC == True):
+    ax.axhline(THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME/100, color='blue', ls='--', label='Max frac. from single autosome = {:,}'.format(THRESHOLD_ATAC_MAX_FRAC_READS_FROM_SINGLE_AUTOSOME/100))
 ax.legend()
 
-fig.suptitle('{:,} pass QC nuclei'.format(len(pass_qc_nuclei)) + " " + donor)
+fig.suptitle('{:,} pass-QC nuclei'.format(len(pass_qc_nuclei)) + " " + sample)
 fig.tight_layout()
-fig.savefig(args.qcPlot, bbox_inches='tight', dpi=300)
+fig.savefig(qcPlot, bbox_inches='tight', dpi=300)
 
 # Plot the number of cells passing each filter
 fig, ax = plt.subplots(figsize=(7, 6))
@@ -208,8 +230,7 @@ ax.remove()
 for_upset = metrics.filter(like='filter_').rename(columns=lambda x: 'pass_' + x)
 for_upset = for_upset.groupby(for_upset.columns.to_list()).size()
 upsetplot.plot(for_upset, fig=fig, sort_by='cardinality', show_counts=True)
-fig.savefig(args.upsetPlot, bbox_inches='tight', dpi=300)
+fig.savefig(upsetPlot, bbox_inches='tight', dpi=300)
 
-
-metrics.to_csv(args.outmetrics, index=False) 
+metrics.to_csv(outmetrics, index=False) 
 
