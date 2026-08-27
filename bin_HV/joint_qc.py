@@ -54,6 +54,7 @@ def str2bool(v):
 parser = argparse.ArgumentParser("Plot QC metrics per sample")
 parser.add_argument("--sample", help="Sample ID. Example: 14806-AH-10-hg38, i.e. `<library name>-<genome>`.", type=str)
 parser.add_argument("--RNA_results_dir", help="Path to RNA results directory.", type=str)
+parser.add_argument("--cellbender_fpr", help="FPR threshold for CellBender results, used to retrieve the correct file.", type=str)
 parser.add_argument("--ATAC_results_dir", help="Path to ATAC results directory.", type=str)
 parser.add_argument("--RNA_BARCODE_WHITELIST", help="Path to RNA barcode whitelist.", type=str)
 parser.add_argument("--ATAC_BARCODE_WHITELIST", help="Path to ATAC barcode whitelist.", type=str)
@@ -88,7 +89,7 @@ setup_logging(log_file=outlogs, level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # sanity check input files
-CELLBENDER = RNA_results_dir+'/cellbender/'+sample+'.cellbender_FPR_0.05.h5'
+CELLBENDER = RNA_results_dir+'/cellbender/'+sample+'.cellbender_FPR_'+args.cellbender_fpr+'.h5'
 if not os.path.isfile(CELLBENDER):
     raise FileNotFoundError(f"File does not exist: {CELLBENDER}.")
 
@@ -283,45 +284,6 @@ if (args.filter_MT_ATAC == True):
 metrics['pass_all_filters'] = metrics.filter(like='filter_').all(axis=1)
 
 # to collect all Thresholds here
-def log_thresholds(thresholds):
-    """
-    Log all computed QC thresholds in a clearly formatted summary.
-
-    Parameters
-    ----------
-    thresholds : dict
-        Dictionary mapping threshold names to their computed values.
-        Expected keys:
-        - rna_min_umi
-        - fraction_cb_removed
-        - rna_max_mito
-        - exon_gene_body_ratio
-        - atac_min_hqaa
-        - atac_min_tss_enrichment
-        - atac_max_mito
-    """
-    header = "Computed QC Thresholds"
-    separator = "=" * 50
-
-    lines = [
-        "",
-        separator,
-        f"  {header}",
-        separator,
-    ]
-
-    for name, value in thresholds.items():
-        formatted_name = name.upper()
-        if isinstance(value, float):
-            lines.append(f"  {formatted_name:<30} = {value:,.2f}")
-        else:
-            lines.append(f"  {formatted_name:<30} = {value:,}")
-
-    lines.append(separator)
-    lines.append("")
-
-    logger.info("\n".join(lines))
-
 if (args.filter_MT_ATAC == True):
     thresholds = {
         "rna_min_umi": THRESHOLD_RNA_MIN_UMI,
@@ -343,6 +305,15 @@ else:
         }
 
 log_thresholds(thresholds)
+
+knee_plot_info = {
+    "knee": knee,
+    "inflection": inflection,
+    "end_cliff": end_cliff,
+    "plateau": plateau,
+    "n_peaks_knee_plot": n_peaks_knee_plot,
+}
+log_thresholds(knee_plot_info)
 
 
 ##########

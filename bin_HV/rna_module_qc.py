@@ -25,41 +25,86 @@ import csv
 
 import argparse
 
-from helper_joint_qc import *
+# import helper functions
+try:
+    from helper_joint_qc import *
+except ModuleNotFoundError as error:
+    if error.name == "helper_joint_qc":
+        raise SystemExit(
+            "Error: Could not find the 'helper_joint_qc' module. "
+            "Run this script from the directory containing 'helper_joint_qc.py', "
+            "or add that directory's absolute path to Python's module search path "
+            "(sys.path or PYTHONPATH)."
+        ) from error
+    raise
 
 from logging_config import setup_logging
 import logging
 
-parser = argparse.ArgumentParser("Plot QC metrics per sample")
-parser.add_argument("--sample", help="Sample ID.", type=str)
-parser.add_argument("--assay_res", help="Assay resolution, e.g. cell or nucleus level. Allowable: 'cell' or 'nuclei'.", type=str)
-parser.add_argument("--RNA_results_dir", help="Path to RNA results directory.", type=str)
-parser.add_argument("--qcPlot", help="Path to save qcPlot plots.", type=str)
-parser.add_argument("--upsetPlot", help="Path to save upset plots.", type=str)
-parser.add_argument("--outmetrics", help="Path to save all metrics results.", type=str)
-parser.add_argument("--outlogs", help="Path to save log messages.", type=str)
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
+parser = argparse.ArgumentParser("Plot QC metrics per sample for RNA module.")
+parser.add_argument("--sample", help="Sample ID. Example: 14806-AH-10-hg38, i.e. `<library name>-<genome>`.", type=str)
+parser.add_argument("--assay_res", help="Assay resolution, e.g. cell or nucleus level. Allowable: 'cell' or 'nucleus'.", type=str, required=True)
+parser.add_argument("--RNA_results_dir", help="Path to RNA results directory.", type=str)
+parser.add_argument("--cellbender_fpr", help="FPR threshold for CellBender results, used to retrieve the correct file.", type=str, default='0.05')
+parser.add_argument("--output", help="Path to save QC plots and metrics.", type=str)
 
 args = parser.parse_args()
 
-# save logs
-setup_logging(log_file=args.outlogs, level=logging.DEBUG)
-logger = logging.getLogger(__name__)
-
 # ---inputs---
-donor = args.sample
-logger.info(f"Sample name: {donor}")
+sample = args.sample
+logger.info(f"Sample name: {sample}")
 RNA_results_dir = str(args.RNA_results_dir)
 logger.info(f"Input dir for RNA: {RNA_results_dir}")
-CELLBENDER = RNA_results_dir+'cellbender/'+donor+'-hg38.cellbender_FPR_0.05.h5'
 
-RNA_METRICS = RNA_results_dir+'qc/'+donor+'-hg38.qc.txt'
-GENE_FULL_EXON_OVER_INTRON_COUNTS = RNA_results_dir + 'starsolo/' + donor + '-hg38/' + donor + '-hg38.Solo.out/GeneFull_ExonOverIntron/raw'
-GENE_COUNTS = RNA_results_dir + 'starsolo/' + donor + '-hg38/' + donor + '-hg38.Solo.out/Gene/raw'
-knee = RNA_results_dir + 'emptyDrops/' + donor + '-hg38.knee.txt'
-passQC = RNA_results_dir + 'emptyDrops/' + donor + '-hg38.pass.txt'
+# --- define output files---
+output = args.output
+qcPlot = output+"/"+sample+".qcPlot.png"
+upsetPlot = output+"/"+sample+".upsetPlot.png"
+outmetrics = output+"/"+sample+".outmetrics.csv"
+outlogs = output+"/"+sample+".log"
+if not os.path.isdir(output):
+    raise FileNotFoundError(f"Directory does not exist: {output}.")
 
-assay_resolution = ['cell', 'nuclei']
+# save logs
+setup_logging(log_file=outlogs, level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+# sanity check input files
+CELLBENDER = RNA_results_dir+'/cellbender/'+sample+'.cellbender_FPR_'+args.cellbender_fpr+'.h5'
+if not os.path.isfile(CELLBENDER):
+    raise FileNotFoundError(f"File does not exist: {CELLBENDER}.")
+
+RNA_METRICS = RNA_results_dir+'/qc/'+sample+'.qc.txt'
+if not os.path.isfile(RNA_METRICS):
+    raise FileNotFoundError(f"File does not exist: {RNA_METRICS}.")
+
+GENE_FULL_EXON_OVER_INTRON_COUNTS = RNA_results_dir + 'starsolo/' + sample + '/' + sample + '.Solo.out/GeneFull_ExonOverIntron/raw'
+if not os.path.isdir(GENE_FULL_EXON_OVER_INTRON_COUNTS):
+    raise FileNotFoundError(f"Directory does not exist: {GENE_FULL_EXON_OVER_INTRON_COUNTS}.")
+
+GENE_COUNTS = RNA_results_dir + 'starsolo/' + sample + '/' + sample + '.Solo.out/Gene/raw'
+if not os.path.isdir(GENE_COUNTS):
+    raise FileNotFoundError(f"Directory does not exist: {GENE_COUNTS}.")
+
+knee = RNA_results_dir + 'emptyDrops/' + sample + '.knee.txt'
+if not os.path.isfile(knee):
+    raise FileNotFoundError(f"File does not exist: {knee}.")
+
+passQC = RNA_results_dir + 'emptyDrops/' + sample + '.pass.txt'
+if not os.path.isfile(passQC):
+    raise FileNotFoundError(f"File does not exist: {passQC}.")
+
+assay_resolution = ['cell', 'nucleus']
 if args.assay_res not in assay_resolution:
     raise ValueError("Invalid assay resolution. Expected one of: %s" % assay_resolution)
 
@@ -147,20 +192,22 @@ THRESHOLD_FRACTION_CB_REMOVED, THRESHOLD_POST_CB_UMIS = get_cellbender_threshold
 metrics['filter_pct_cellbender_removed'] = metrics.pct_cellbender_removed <= THRESHOLD_FRACTION_CB_REMOVED*100
 
 
-### get THRESHOLD_EXON_GENE_BODY_RATIO
-import skimage as ski
-from scipy import ndimage as ndi
-x = np.log10(metrics[(metrics.rna_exon_to_full_gene_body_ratio>0)&
-                     (metrics.filter_rna_min_umi ==True)].rna_umis)
-y = metrics[(metrics.rna_exon_to_full_gene_body_ratio>0)&
-            (metrics.filter_rna_min_umi ==True)].rna_exon_to_full_gene_body_ratio
+### get THRESHOLD_EXON_GENE_BODY_RATIO for snRNA-seq/multiome
+if args.assay_res == "nucleus":
+    import skimage as ski
+    from scipy import ndimage as ndi
+    x = np.log10(metrics[(metrics.rna_exon_to_full_gene_body_ratio>0)&
+                        (metrics.filter_rna_min_umi ==True)].rna_umis)
+    y = metrics[(metrics.rna_exon_to_full_gene_body_ratio>0)&
+                (metrics.filter_rna_min_umi ==True)].rna_exon_to_full_gene_body_ratio
 
-THRESHOLD_EXON_GENE_BODY_RATIO = get_exon_fullgene_ratio(x, y)
+    THRESHOLD_EXON_GENE_BODY_RATIO = get_exon_fullgene_ratio(x, y)
 
-if THRESHOLD_EXON_GENE_BODY_RATIO >= 0.95:
-    data = metrics[(metrics.rna_exon_to_full_gene_body_ratio>0)&
-              (metrics.rna_exon_to_full_gene_body_ratio<1.0)].rna_exon_to_full_gene_body_ratio.astype(float).values
-    THRESHOLD_EXON_GENE_BODY_RATIO = threshold_multiotsu(data, classes=3)[1]
+    if THRESHOLD_EXON_GENE_BODY_RATIO >= 0.95:
+        data = metrics[(metrics.rna_exon_to_full_gene_body_ratio>0)&
+                (metrics.rna_exon_to_full_gene_body_ratio<1.0)].rna_exon_to_full_gene_body_ratio.astype(float).values
+        THRESHOLD_EXON_GENE_BODY_RATIO = threshold_multiotsu(data, classes=3)[1]
+
 
 ### get THRESHOLD_RNA_MAX_MITO
 n_peaks, rna_kde_df = guess_n_classes(metrics, "RNA")
@@ -175,61 +222,45 @@ df_ranked, df_interpolated, n_peaks_knee_plot, final_peak_indices = analyze_knee
 ##############################
 
 
-### get cells that passed all thresholds; those that passed post-CB nUMIs have been identified above
+### get cells/nuclei that passed all thresholds; those that passed post-CB nUMIs have been identified above
 metrics['filter_cellbender_cell_probability'] = metrics.cell_probability >= THRESHOLD_CELLBENDER_MIN_CELL_PROBABILITY
 metrics['filter_rna_max_mito'] = metrics.rna_percent_mitochondrial <= THRESHOLD_RNA_MAX_MITO
-if args.assay_res == "nuclei":
+if args.assay_res == "nucleus":
     metrics['filter_rna_exon_to_full_gene_body_ratio'] = metrics.rna_exon_to_full_gene_body_ratio <= THRESHOLD_EXON_GENE_BODY_RATIO
-else:
-    logger.info(f"Assay resolution was set to be 'cell', so exon_to_full_gene_body_ratio is calculated but not used for filtering.")
+
+### get HELM threshold
+if args.assay_res == "cell":
+    metrics['rna_helm_metric'] = metrics.rna_fraction_mitochondrial * (1 - metrics.rna_exon_to_full_gene_body_ratio)
+    with np.errstate(divide='ignore', invalid='ignore'):
+            metrics['rna_log_helm_metric'] = np.log(metrics['rna_helm_metric'])
+    THRESHOLD_HELM, n_peaks_helm = get_helm_threshold(metrics)
+
+if args.assay_res == "cell":
+    metrics['filter_helm'] = metrics.rna_log_helm_metric >= THRESHOLD_HELM
+
 metrics['pass_all_filters'] = metrics.filter(like='filter_').all(axis=1)
 
 # to collect all Thresholds here
-def log_thresholds(thresholds):
-    """
-    Log all computed QC thresholds in a clearly formatted summary.
-
-    Parameters
-    ----------
-    thresholds : dict
-        Dictionary mapping threshold names to their computed values.
-        Expected keys:
-        - rna_min_umi
-        - fraction_cb_removed
-        - rna_max_mito
-        - exon_gene_body_ratio
-    """
-    header = "Computed QC Thresholds"
-    separator = "=" * 50
-
-    lines = [
-        "",
-        separator,
-        f"  {header}",
-        separator,
-    ]
-
-    for name, value in thresholds.items():
-        formatted_name = name.upper()
-        if isinstance(value, float):
-            lines.append(f"  {formatted_name:<30} = {value:,.2f}")
-        else:
-            lines.append(f"  {formatted_name:<30} = {value:,}")
-
-    lines.append(separator)
-    lines.append("")
-
-    logger.info("\n".join(lines))
-
 thresholds = {
         "rna_min_umi": THRESHOLD_RNA_MIN_UMI,
         "fraction_cb_removed": THRESHOLD_FRACTION_CB_REMOVED,
         "rna_max_mito": THRESHOLD_RNA_MAX_MITO,
-        "exon_gene_body_ratio": THRESHOLD_EXON_GENE_BODY_RATIO
-        }
+    }
+if args.assay_res == "nucleus":
+    thresholds["exon_gene_body_ratio"] = THRESHOLD_EXON_GENE_BODY_RATIO
+else:
+    thresholds["helm"] = THRESHOLD_HELM
 
 log_thresholds(thresholds)
 
+knee_plot_info = {
+    "knee": knee,
+    "inflection": inflection,
+    "end_cliff": end_cliff,
+    "plateau": plateau,
+    "n_peaks_knee_plot": n_peaks_knee_plot,
+}
+log_thresholds(knee_plot_info)
 
 ##########
 metrics = metrics.reset_index()
@@ -251,7 +282,7 @@ ax.legend()
 
 ax = axs[0, 1]
 rna_umis_vs_rna_mito_plot(metrics, ax)
-ax.axhline(THRESHOLD_RNA_MAX_MITO/100, color='blue', ls='--', label='THRESHOLD_RNA_MAX_MITO = {:,}'.format(THRESHOLD_RNA_MAX_MITO))
+ax.axhline(THRESHOLD_RNA_MAX_MITO/100, color='blue', ls='--', label='max RNA MT frac. = {:,}'.format(THRESHOLD_RNA_MAX_MITO))
 ax.axvline(THRESHOLD_RNA_MIN_UMI, color='red', ls='--')
 ax.legend()
 
@@ -271,18 +302,24 @@ ax = axs[1, 1]
 cellbender_cell_probabilities(metrics, ax)
 
 ax = axs[1, 2]
-rna_umis_vs_exon_to_full_gene_body_ratio(metrics, ax)
-ax.axhline(THRESHOLD_EXON_GENE_BODY_RATIO, color='red', ls='--', label='exon/full ratio. Multi-otsu = {:,}'.format(round(THRESHOLD_EXON_GENE_BODY_RATIO, 2)))
-ax.legend()
-ax.axvline(THRESHOLD_RNA_MIN_UMI, color='red', ls='--')
-ax.set_xlim(left=0.8*THRESHOLD_RNA_MIN_UMI)
+if args.assay_res == "nucleus":
+    rna_umis_vs_exon_to_full_gene_body_ratio(metrics, ax)
+    ax.axhline(THRESHOLD_EXON_GENE_BODY_RATIO, color='red', ls='--', label='exon/full ratio. Multi-otsu = {:,}'.format(round(THRESHOLD_EXON_GENE_BODY_RATIO, 2)))
+    ax.legend()
+    ax.axvline(THRESHOLD_RNA_MIN_UMI, color='red', ls='--')
+    ax.set_xlim(left=0.8*THRESHOLD_RNA_MIN_UMI)
+else:
+    sns.histplot(x='rna_helm_metric', data=metrics, ax=ax)
+    ax.axvline(THRESHOLD_HELM, color='blue', ls='--', label='mito fraction x intron fraction thres= {:,}'.format(round(THRESHOLD_HELM, 2)))
+    ax.legend()
+    ax.set_xlabel('RNA frac. chrMT * (1 - exon/full gene)')
 
 if args.assay_res == "nuclei":
-    fig.suptitle('{:,} pass QC nuclei'.format(len(pass_qc_nuclei)) + " " + donor)
+    fig.suptitle('{:,} pass QC nuclei'.format(len(pass_qc_nuclei)) + " " + sample)
 else:
-    fig.suptitle('{:,} pass QC cells'.format(len(pass_qc_nuclei)) + " " + donor)
+    fig.suptitle('{:,} pass QC cells'.format(len(pass_qc_nuclei)) + " " + sample)
 fig.tight_layout()
-fig.savefig(args.qcPlot, bbox_inches='tight', dpi=300)
+fig.savefig(qcPlot, bbox_inches='tight', dpi=300)
 
 # Plot the number of cells passing each filter
 fig, ax = plt.subplots(figsize=(7, 6))
@@ -291,8 +328,8 @@ ax.remove()
 for_upset = metrics.filter(like='filter_').rename(columns=lambda x: 'pass_' + x)
 for_upset = for_upset.groupby(for_upset.columns.to_list()).size()
 upsetplot.plot(for_upset, fig=fig, sort_by='cardinality', show_counts=True)
-fig.savefig(args.upsetPlot, bbox_inches='tight', dpi=300)
+fig.savefig(upsetPlot, bbox_inches='tight', dpi=300)
 
 
-metrics.to_csv(args.outmetrics, index=False) 
+metrics.to_csv(outmetrics, index=False) 
 

@@ -133,45 +133,6 @@ if (args.filter_MT_ATAC == True):
 metrics['pass_all_filters'] = metrics.filter(like='filter_').all(axis=1)
 
 # to collect all Thresholds here
-def log_thresholds(thresholds):
-    """
-    Log all computed QC thresholds in a clearly formatted summary.
-
-    Parameters
-    ----------
-    thresholds : dict
-        Dictionary mapping threshold names to their computed values.
-        Expected keys:
-        - rna_min_umi
-        - fraction_cb_removed
-        - rna_max_mito
-        - exon_gene_body_ratio
-        - atac_min_hqaa
-        - atac_min_tss_enrichment
-        - atac_max_mito
-    """
-    header = "Computed QC Thresholds"
-    separator = "=" * 50
-
-    lines = [
-        "",
-        separator,
-        f"  {header}",
-        separator,
-    ]
-
-    for name, value in thresholds.items():
-        formatted_name = name.upper()
-        if isinstance(value, float):
-            lines.append(f"  {formatted_name:<30} = {value:,.2f}")
-        else:
-            lines.append(f"  {formatted_name:<30} = {value:,}")
-
-    lines.append(separator)
-    lines.append("")
-
-    logger.info("\n".join(lines))
-
 thresholds = {
         "atac_min_hqaa": THRESHOLD_ATAC_MIN_HQAA,
         "atac_min_tss_enrichment": THRESHOLD_ATAC_MIN_TSS_ENRICHMENT

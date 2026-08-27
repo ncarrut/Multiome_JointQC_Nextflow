@@ -14,7 +14,7 @@ import seaborn as sns # type: ignore
 import skimage as ski # type: ignore
 import tables # type: ignore
 from scipy.interpolate import interp1d # type: ignore
-from scipy.signal import find_peaks, savgol_filter # type: ignore
+from scipy.signal import find_peaks, savgol_filter, peak_widths # type: ignore
 from skimage.filters import threshold_multiotsu # type: ignore
 from skimage import measure # type: ignore
 
@@ -582,6 +582,74 @@ def get_exon_fullgene_ratio(x, y, metrics = None):
     
     data = metrics[(metrics.rna_exon_to_full_gene_body_ratio > 0) & (metrics.rna_exon_to_full_gene_body_ratio < 1.0)].rna_exon_to_full_gene_body_ratio.astype(float).values
     return round(threshold_multiotsu(data, classes=3)[1], 2)
+
+### HELM (mito fraction x intron fraction) thresholding, used for scRNA in place of the exon/full-gene-body-ratio filter -- from Nick
+def get_helm_threshold(metrics):
+    """
+    Estimate the HELM threshold: log(rna_fraction_mitochondrial * (1 - rna_exon_to_full_gene_body_ratio)).
+
+    Restricts to barcodes passing emptyDrops, min-UMI, %ambient-removed, and max-mito
+    filters with a positive HELM value, then fits a KDE and looks
+    for bimodality. Two-class Multi-Otsu is used when more than one peak is found;
+    otherwise the left edge (98% relative height) of the single peak is used. Barcodes
+    are kept (pass_all_filters-eligible) when their log(HELM) value is >= this threshold;
+    barcodes below the threshold are excluded.
+
+    Parameters
+    ----------
+    metrics : pd.DataFrame
+        QC metrics DataFrame. Must contain filter_rna_emptyDrops, filter_rna_min_umi,
+        filter_pct_cellbender_removed, filter_rna_max_mito, rna_helm_metric, and
+        rna_log_helm_metric.
+
+    Returns
+    -------
+    tuple
+        (THRESHOLD_HELM, n_peaks)
+    """
+    required_columns = {
+        "filter_rna_emptyDrops",
+        "filter_rna_min_umi",
+        "filter_pct_cellbender_removed",
+        "filter_rna_max_mito",
+        "rna_helm_metric",
+        "rna_log_helm_metric",
+    }
+    missing_columns = required_columns - set(metrics.columns)
+    if missing_columns:
+        raise ValueError(
+            f"Missing required columns for HELM thresholding: {missing_columns}"
+        )
+
+    f_metrics = metrics[(metrics.filter_rna_emptyDrops == True) &
+                        (metrics.filter_rna_min_umi == True) &
+                        (metrics.filter_pct_cellbender_removed == True) &
+                        (metrics.filter_rna_max_mito == True) &
+                        (metrics.rna_helm_metric > 0)]
+    log_helm = f_metrics.rna_log_helm_metric
+
+    kde = sns.kdeplot(log_helm)
+    x = kde.lines[0].get_xdata()
+    y = kde.lines[0].get_ydata()
+    peaks, _ = find_peaks(y, prominence=abs(max(y) * 0.01))
+    n_peaks = len(peaks)
+    plt.clf()
+
+    logger.info(f"Number of prominent peaks in HELM distribution: {n_peaks:,}")
+
+    if n_peaks > 1:
+        values = log_helm.values.reshape((len(log_helm), 1))
+        THRESHOLD_HELM = threshold_multiotsu(image=values, classes=2, nbins=256)[0]
+    elif n_peaks == 1:
+        widths, width_heights, left_ips, right_ips = peak_widths(y, peaks, rel_height=0.98)
+        THRESHOLD_HELM = x[int(round(left_ips[0]))]
+    else:
+        logger.warning("HELM thresholding: no KDE peaks detected; falling back to Multi-Otsu on the full distribution.")
+        values = log_helm.values.reshape((len(log_helm), 1))
+        THRESHOLD_HELM = threshold_multiotsu(image=values, classes=2, nbins=256)[0]
+
+    return THRESHOLD_HELM, n_peaks
+
 
 # ==============================================================================
 # 4. KNEE PLOT ANALYSIS
@@ -1270,3 +1338,36 @@ def atac_tss_enrichment_vs_atac_mt_pct_plot(metrics, ax, hue='pass_all_filters',
     return ax
 
 
+# ==============================================================================
+# 7. LOG FUNCTION
+# ==============================================================================
+def log_thresholds(thresholds):
+    """
+    Log all computed QC thresholds in a clearly formatted summary.
+
+    Parameters
+    ----------
+    thresholds : dict
+        Dictionary mapping threshold names to their computed values.
+    """
+    header = "Computed QC Thresholds"
+    separator = "=" * 50
+
+    lines = [
+        "",
+        separator,
+        f"  {header}",
+        separator,
+    ]
+
+    for name, value in thresholds.items():
+        formatted_name = name.upper()
+        if isinstance(value, float):
+            lines.append(f"  {formatted_name:<30} = {value:,.2f}")
+        else:
+            lines.append(f"  {formatted_name:<30} = {value:,}")
+
+    lines.append(separator)
+    lines.append("")
+
+    logger.info("\n".join(lines))
