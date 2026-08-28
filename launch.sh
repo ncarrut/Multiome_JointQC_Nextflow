@@ -19,6 +19,6 @@ BASE_DIR=/nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atl
 # outdir to avoid output filename collisions.
 for config in single_cell_v2 single_cell_v3 single_nuclei_v2 single_nuclei_v3 single_nuclei_mixed; do
     nextflow run "${BASE_DIR}/main.nf" \
-        -params-file "${BASE_DIR}/library-config_${config}.json" \
+        --samplesheet "${BASE_DIR}/library-config_${config}.tsv" \
         --outdir "${BASE_DIR}/../results/${config}"
 done

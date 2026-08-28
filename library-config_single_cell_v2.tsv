@@ -1,0 +1,6 @@
+sample_id	assay	RNA_results_dir	ATAC_results_dir
+362C	scRNA	/nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Kedlian_2024/single_cell/results_v2/
+367C	scRNA	/nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Kedlian_2024/single_cell/results_v2/
+411C	scRNA	/nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Kedlian_2024/single_cell/results_v2/
+464C	scRNA	/nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Kedlian_2024/single_cell/results_v2/
+470BR	scRNA	/nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Kedlian_2024/single_cell/results_v2/
