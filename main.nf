@@ -356,6 +356,7 @@ process JOINT_QC {
         path "${sample_id}_qcPlot.png", emit: qc_plot
         path "${sample_id}_upsetPlot.png", emit: upset_plot
         path "${sample_id}_metrics.txt", emit: metrics
+        path "${sample_id}.log", emit: log
 
     script:
     """
@@ -367,46 +368,151 @@ process JOINT_QC {
         --RNA_METRICS ${rna_metrics} \\
         --knee ${knee} \\
         --passQC ${pass_qc} \\
-        --RNA_BARCODE_WHITELIST ${params.rna_barcode_whitelist} \\
-        --ATAC_BARCODE_WHITELIST ${params.atac_barcode_whitelist} \\
+        --filter_MT_ATAC ${params.filter_MT_ATAC} \\
         --qcPlot ${sample_id}_qcPlot.png \\
         --upsetPlot ${sample_id}_upsetPlot.png \\
         --outmetrics ${sample_id}_metrics.txt
     """
 }
 
+process RNA_QC {
+    tag "${sample}"
+    memory '16 GB'
+    publishDir "${params.results}/rna_qc", mode: 'copy'
+    container 'docker://ncarrut/singlecell_qc:second'
+
+    input:
+        tuple val(sample), val(assay_res), path(intron_counts), path(cellbender_h5), path(rna_metrics), path(knee), path(pass_qc)
+
+    output:
+        path "${sample}.qcPlot.png", emit: qc_plot
+        path "${sample}.upsetPlot.png", emit: upset_plot
+        path "${sample}.outmetrics.csv", emit: metrics
+        path "${sample}.log", emit: log
+
+    script:
+    """
+    python ${baseDir}/bin/rna_module_qc.py \\
+        --sample ${sample} \\
+        --assay_res ${assay_res} \\
+        --RNA_results_dir ${params.results} \\
+        --cellbender_fpr ${params.cellbender_fpr} \\
+        --output .
+    """
+}
+
+process ATAC_QC {
+    tag "${sample}"
+    memory '16 GB'
+    publishDir "${params.results}/atac_qc/module_qc", mode: 'copy'
+    container 'docker://ncarrut/singlecell_qc:second'
+
+    input:
+        tuple val(sample), path(atac_metrics)
+
+    output:
+        path "${sample}.qcPlot.png", emit: qc_plot
+        path "${sample}.upsetPlot.png", emit: upset_plot
+        path "${sample}.outmetrics.csv", emit: metrics
+        path "${sample}.log", emit: log
+
+    script:
+    """
+    python ${baseDir}/bin/atac_module_qc.py \\
+        --sample ${sample} \\
+        --ATAC_results_dir ${params.results} \\
+        --filter_MT_ATAC ${params.filter_MT_ATAC} \\
+        --output .
+    """
+}
+
 workflow {
-    Channel
-        .fromPath(params.samplesheet)
-        .splitCsv(header: true, sep: '\t')
-        .map { row ->
-            def sample = row.sample
-            def location = row.location
-            def cluster_res = row.cluster_res ? row.cluster_res.toFloat() : params.cluster_res
-            def df_pk = row.df_pk ? row.df_pk.toFloat() : params.df_pk
-            return tuple(sample, location, cluster_res, df_pk)
-        }.set { samples_ch }
+    def valid_assays = ["multiome", "scRNA", "snRNA", "ATAC"]
+    def assay_res = ["scRNA": "cell", "snRNA": "nucleus"]
 
-    samples_ch.view { sample, location, cluster_res, df_pk ->
-        "Sample: ${sample} | Location: ${location} | Cluster_res: ${cluster_res} | DoubletFinder_PK: ${df_pk}"
+    multiome_in = []
+    rna_in = []
+    atac_in = []
+
+    def rows = file(params.samplesheet).splitCsv(header: true, sep: '\t')
+
+    for (row in rows) {
+        sample = row.sample
+        location = row.location
+        cluster_res = row.cluster_res ? row.cluster_res.toFloat() : params.cluster_res
+        df_pk = row.df_pk ? row.df_pk.toFloat() : params.df_pk
+        assay = row.assay ? row.assay : "multiome"
+
+        if (!valid_assays.contains(assay)) {
+            error "Sample '${sample}' has unrecognized assay '${assay}'. Expected one of: ${valid_assays.join(', ')}."
+        }
+
+        if (assay == "multiome") {
+            multiome_in << [sample, location, cluster_res, df_pk]
+        } else if (assay == "ATAC") {
+            atac_in << [sample, location, cluster_res, df_pk]
+        } else {
+            rna_in << [sample, location, cluster_res, df_pk, assay_res[assay]]
+        }
     }
-    
-    splitter_out = SPLITTER(samples_ch)
-    intron_counter_out = INTRONCOUNTER(samples_ch)
-    rna_metrics_out = QC(samples_ch.join(splitter_out.GEX))
-    qc_out = PLOTQC(rna_metrics_out)
-    rankplot_out = INTERACTIVEBARCODERANKPLOT(splitter_out.GEX)
-    cellbender_out = CELLBENDER(splitter_out.GEX)
-    emptyDrops_out = EMPTYDROPS(splitter_out.GEX.join(cellbender_out.metrics))
-    
-    // ATAC QC processing with 10X cellranger alignment
-    bigwig_out = BIGWIG(samples_ch)
-    tss_plot_out = PLOT_SIGNAL_AT_TSS(bigwig_out)
-    atac_single_nucleus = ATAQV_SINGLE_NUCLEUS(samples_ch)
-    atac_processed = atac_single_nucleus.metrics | add_qc_metrics
-    atac_processed | plot_qc_metrics
-    atac_bulk = ATAQV_BULK(samples_ch)
-    atac_viewer = ATAQV_BULK_VIEWER(atac_bulk.json)
 
-    JOINT_QC(samples_ch.join(atac_processed).join(intron_counter_out.counts).join(cellbender_out.h5_fpr05).join(rna_metrics_out).join(emptyDrops_out.knee_pass))
+    if (multiome_in) {
+        samples_ch = Channel.from(multiome_in)
+        samples_ch.view { sample, location, cluster_res, df_pk ->
+            "multiome: ${sample} | Location: ${location} | Cluster_res: ${cluster_res} | DoubletFinder_PK: ${df_pk}"
+        }
+
+        splitter_out = SPLITTER(samples_ch)
+        intron_counter_out = INTRONCOUNTER(samples_ch)
+        rna_metrics_out = QC(samples_ch.join(splitter_out.GEX))
+        qc_out = PLOTQC(rna_metrics_out)
+        rankplot_out = INTERACTIVEBARCODERANKPLOT(splitter_out.GEX)
+        cellbender_out = CELLBENDER(splitter_out.GEX)
+        emptyDrops_out = EMPTYDROPS(splitter_out.GEX.join(cellbender_out.metrics))
+
+        // ATAC QC processing with 10X cellranger alignment
+        bigwig_out = BIGWIG(samples_ch)
+        tss_plot_out = PLOT_SIGNAL_AT_TSS(bigwig_out)
+        atac_single_nucleus = ATAQV_SINGLE_NUCLEUS(samples_ch)
+        atac_processed = atac_single_nucleus.metrics | add_qc_metrics
+        atac_processed | plot_qc_metrics
+        atac_bulk = ATAQV_BULK(samples_ch)
+        atac_viewer = ATAQV_BULK_VIEWER(atac_bulk.json)
+
+        JOINT_QC(samples_ch.join(atac_processed).join(intron_counter_out.counts).join(cellbender_out.h5_fpr05).join(rna_metrics_out).join(emptyDrops_out.knee_pass))
+    }
+
+    if (rna_in) {
+        rna_samples_ch = Channel.from(rna_in)
+        rna_samples_ch.view { sample, location, cluster_res, df_pk, res ->
+            "RNA-only (${res}): ${sample} | Location: ${location}"
+        }
+        rna_loc_ch = rna_samples_ch.map { sample, location, cluster_res, df_pk, res -> tuple(sample, location, cluster_res, df_pk) }
+
+        rna_splitter_out = SPLITTER(rna_loc_ch)
+        rna_intron_counter_out = INTRONCOUNTER(rna_loc_ch)
+        rna_rna_metrics_out = QC(rna_loc_ch.join(rna_splitter_out.GEX))
+        rna_cellbender_out = CELLBENDER(rna_splitter_out.GEX)
+        rna_emptyDrops_out = EMPTYDROPS(rna_splitter_out.GEX.join(rna_cellbender_out.metrics))
+
+        RNA_QC(
+            rna_samples_ch.map { sample, location, cluster_res, df_pk, res -> tuple(sample, res) }
+                .join(rna_intron_counter_out.counts)
+                .join(rna_cellbender_out.h5_fpr05)
+                .join(rna_rna_metrics_out)
+                .join(rna_emptyDrops_out.knee_pass)
+        )
+    }
+
+    if (atac_in) {
+        atac_samples_ch = Channel.from(atac_in)
+        atac_samples_ch.view { sample, location, cluster_res, df_pk ->
+            "ATAC-only: ${sample} | Location: ${location}"
+        }
+
+        atac_single_nucleus_only = ATAQV_SINGLE_NUCLEUS(atac_samples_ch)
+        atac_processed_only = atac_single_nucleus_only.metrics | add_qc_metrics
+
+        ATAC_QC(atac_processed_only)
+    }
 }

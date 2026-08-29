@@ -6,11 +6,6 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=UserWarning)
 
-import os
-
-current_dir = os.getcwd()
-os.environ['MPLCONFIGDIR'] = current_dir
-
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -23,6 +18,7 @@ import numpy as np
 import scipy.sparse as sp
 from scipy import io
 import glob
+import os
 import upsetplot
 from scipy.io import mmread
 import csv
@@ -55,85 +51,71 @@ def str2bool(v):
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
-parser = argparse.ArgumentParser("Plot QC metrics per sample")
-parser.add_argument("--sample", help="Donor ID.", type=str)
-parser.add_argument("--ATAC_metrics", help="Path to ATAC ataqv metrics file.", type=str)
-parser.add_argument("--INTRON_COUNTS", help="Path to intron counter output file.", type=str)
-parser.add_argument("--CELLBENDER", help="Path to CellBender FPR 0.05 h5 file.", type=str)
-parser.add_argument("--RNA_METRICS", help="Path to RNA QC metrics file.", type=str)
-parser.add_argument("--knee", help="Path to emptyDrops knee file.", type=str)
-parser.add_argument("--passQC", help="Path to emptyDrops pass file.", type=str)
-parser.add_argument("--filter_MT_ATAC", help="Whether to filter ATAC nuclei based on %chrMT threshold. Default: True.", type=str2bool, default=True)
-parser.add_argument("--qcPlot", help="Path to save qcPlot plots.", type=str)
-parser.add_argument("--upsetPlot", help="Path to save upset plots.", type=str)
-parser.add_argument("--outmetrics", help="Path to save all metrics results.", type=str)
-parser.add_argument("--manual", action="store_true", help="Manual mode: read all args from .command.sh in the current working directory.")
-
+parser = argparse.ArgumentParser("Plot QC metrics per sample for RNA module.")
+parser.add_argument("--sample", help="Sample ID. Example: 14806-AH-10-hg38, i.e. `<library name>-<genome>`.", type=str)
+parser.add_argument("--assay_res", help="Assay resolution, e.g. cell or nucleus level. Allowable: 'cell' or 'nucleus'.", type=str, required=True)
+parser.add_argument("--RNA_results_dir", help="Path to RNA results directory.", type=str)
+parser.add_argument("--cellbender_fpr", help="FPR threshold for CellBender results, used to retrieve the correct file.", type=str, default='0.05')
+parser.add_argument("--output", help="Path to save QC plots and metrics.", type=str)
 
 args = parser.parse_args()
 
-#args.manual = True
 # ---inputs---
-if args.manual:
-    import re
-    with open('.command.sh') as _f:
-        _cmd = _f.read()
-    def _get_arg(name):
-        m = re.search(rf'--{name}\s+(\S+)', _cmd)
-        return m.group(1) if m else None
-    sample = _get_arg('sample')
-    ATAC_METRICS = _get_arg('ATAC_metrics')
-    INTRON_COUNTS = _get_arg('INTRON_COUNTS')
-    CELLBENDER = _get_arg('CELLBENDER')
-    RNA_METRICS = _get_arg('RNA_METRICS')
-    knee = _get_arg('knee')
-    passQC = _get_arg('passQC')
-    args.qcPlot = _get_arg('qcPlot')
-    args.upsetPlot = _get_arg('upsetPlot')
-    args.outmetrics = _get_arg('outmetrics')
-else:
-    sample = args.sample
-    ATAC_METRICS = args.ATAC_metrics
-    INTRON_COUNTS = args.INTRON_COUNTS
-    CELLBENDER = args.CELLBENDER
-    RNA_METRICS = args.RNA_METRICS
-    knee = args.knee
-    passQC = args.passQC
+sample = args.sample
+logger.info(f"Sample name: {sample}")
+RNA_results_dir = str(args.RNA_results_dir)
+logger.info(f"Input dir for RNA: {RNA_results_dir}")
 
 # --- define output files---
-qcPlot = args.qcPlot
-upsetPlot = args.upsetPlot
-outmetrics = args.outmetrics
-outlogs = os.path.join(os.path.dirname(outmetrics) or '.', sample + '.log')
+output = args.output
+qcPlot = output+"/"+sample+".qcPlot.png"
+upsetPlot = output+"/"+sample+".upsetPlot.png"
+outmetrics = output+"/"+sample+".outmetrics.csv"
+outlogs = output+"/"+sample+".log"
+if not os.path.isdir(output):
+    raise FileNotFoundError(f"Directory does not exist: {output}.")
 
 # save logs
 setup_logging(log_file=outlogs, level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-logger.info(f"Sample name: {sample}")
-
 # sanity check input files
-for _label, _path in [("CELLBENDER", CELLBENDER), ("RNA_METRICS", RNA_METRICS),
-                       ("ATAC_METRICS", ATAC_METRICS), ("INTRON_COUNTS", INTRON_COUNTS),
-                       ("knee", knee), ("passQC", passQC)]:
-    if not os.path.isfile(_path):
-        raise FileNotFoundError(f"File does not exist: {_path}.")
+CELLBENDER = RNA_results_dir+'/cellbender/'+sample+'.cellbender_FPR_'+args.cellbender_fpr+'.h5'
+if not os.path.isfile(CELLBENDER):
+    raise FileNotFoundError(f"File does not exist: {CELLBENDER}.")
 
-# ---upfront thresholds---
+RNA_METRICS = RNA_results_dir+'/qc/'+sample+'.qc.txt'
+if not os.path.isfile(RNA_METRICS):
+    raise FileNotFoundError(f"File does not exist: {RNA_METRICS}.")
+
+INTRON_COUNTS = RNA_results_dir + '/counter/' + sample + '_counts.txt'
+if not os.path.isfile(INTRON_COUNTS):
+    raise FileNotFoundError(f"File does not exist: {INTRON_COUNTS}.")
+
+knee = RNA_results_dir + '/emptyDrops/' + sample + '.knee.txt'
+if not os.path.isfile(knee):
+    raise FileNotFoundError(f"File does not exist: {knee}.")
+
+passQC = RNA_results_dir + '/emptyDrops/' + sample + '.pass.txt'
+if not os.path.isfile(passQC):
+    raise FileNotFoundError(f"File does not exist: {passQC}.")
+
+assay_resolution = ['cell', 'nucleus']
+if args.assay_res not in assay_resolution:
+    raise ValueError("Invalid assay resolution. Expected one of: %s" % assay_resolution)
+
+# ---upfront thresholds--- 
 THRESHOLD_CELLBENDER_MIN_CELL_PROBABILITY = 0.99
-THRESHOLD_ATAC_MIN_TSS_ENRICHMENT = 2
 
 # ---process inputs---
-## Note: unlike the custom snRNAseq-NextFlow/snATACseq-NextFlow pipelines, 10x
-## cellranger-arc already emits RNA and ATAC data under a shared barcode
-## namespace, so no ATAC->RNA barcode whitelist translation is needed here.
-
 ## load metrics df
 adata = anndata_from_h5(CELLBENDER, analyzed_barcodes_only=True)
 rna_metrics = pd.read_csv(RNA_METRICS, sep='\t')
 rna_metrics = rna_metrics[rna_metrics.barcode!='-']
 
 ## Calculate ratio of exonic vs full gene body reads from intron counter output
+# cellranger has no STARsolo Gene/GeneFull matrices; instead derive the ratio from
+# per-read RE:A exonic('E')/intronic('I') tag counts (see bin/intron_counter.sh)
 intron_counts = pd.read_csv(INTRON_COUNTS, sep=r'\s+', header=None, names=['count', 'barcode', 'type'],
                              engine='python', skipinitialspace=True)
 intron_counts = intron_counts[intron_counts.type.isin(['E', 'I'])]
@@ -159,7 +141,7 @@ metrics['pct_cellbender_removed'] = metrics.fraction_cellbender_removed * 100
 metrics['filter_cellbender_cell_probability'] = metrics.cell_probability >= THRESHOLD_CELLBENDER_MIN_CELL_PROBABILITY
 
 ### get bc that passed emptydrops analysis
-bc = pd.read_csv(passQC, header=0, delim_whitespace="\t")
+bc = pd.read_csv(passQC, header=0, delim_whitespace="\t") 
 metrics['filter_rna_emptyDrops'] = metrics['barcode'].isin(bc.barcode)
 
 ### load metrics on knee plot
@@ -203,18 +185,22 @@ THRESHOLD_FRACTION_CB_REMOVED, THRESHOLD_POST_CB_UMIS = get_cellbender_threshold
 metrics['filter_pct_cellbender_removed'] = metrics.pct_cellbender_removed <= THRESHOLD_FRACTION_CB_REMOVED*100
 
 
-### get THRESHOLD_EXON_GENE_BODY_RATIO
-x = np.log10(metrics[(metrics.rna_exon_to_full_gene_body_ratio>0)&
-                     (metrics.filter_rna_min_umi ==True)].rna_umis)
-y = metrics[(metrics.rna_exon_to_full_gene_body_ratio>0)&
-            (metrics.filter_rna_min_umi ==True)].rna_exon_to_full_gene_body_ratio
+### get THRESHOLD_EXON_GENE_BODY_RATIO for snRNA-seq/multiome
+if args.assay_res == "nucleus":
+    import skimage as ski
+    from scipy import ndimage as ndi
+    x = np.log10(metrics[(metrics.rna_exon_to_full_gene_body_ratio>0)&
+                        (metrics.filter_rna_min_umi ==True)].rna_umis)
+    y = metrics[(metrics.rna_exon_to_full_gene_body_ratio>0)&
+                (metrics.filter_rna_min_umi ==True)].rna_exon_to_full_gene_body_ratio
 
-THRESHOLD_EXON_GENE_BODY_RATIO = get_exon_fullgene_ratio(x, y)
+    THRESHOLD_EXON_GENE_BODY_RATIO = get_exon_fullgene_ratio(x, y)
 
-if THRESHOLD_EXON_GENE_BODY_RATIO >= 0.95:
-    data = metrics[(metrics.rna_exon_to_full_gene_body_ratio>0)&
-              (metrics.rna_exon_to_full_gene_body_ratio<1.0)].rna_exon_to_full_gene_body_ratio.astype(float).values
-    THRESHOLD_EXON_GENE_BODY_RATIO = threshold_multiotsu(data, classes=3)[1]
+    if THRESHOLD_EXON_GENE_BODY_RATIO >= 0.95:
+        data = metrics[(metrics.rna_exon_to_full_gene_body_ratio>0)&
+                (metrics.rna_exon_to_full_gene_body_ratio<1.0)].rna_exon_to_full_gene_body_ratio.astype(float).values
+        THRESHOLD_EXON_GENE_BODY_RATIO = threshold_multiotsu(data, classes=3)[1]
+
 
 ### get THRESHOLD_RNA_MAX_MITO
 n_peaks, rna_kde_df = guess_n_classes(metrics, "RNA")
@@ -228,75 +214,35 @@ from scipy.signal import find_peaks, savgol_filter
 df_ranked, df_interpolated, n_peaks_knee_plot, final_peak_indices = analyze_knee_plot(metrics, knee, knee_rank, end_cliff, end_cliff_rank, inflection_rank)
 ##############################
 
-### ATAC side ###
-atac_metrics = pd.read_csv(ATAC_METRICS, sep='\t', index_col=0).rename_axis(index='barcode')
-KEEP_ATAC_METRICS = ['median_fragment_length', 'hqaa', 'max_fraction_reads_from_single_autosome', 'percent_mitochondrial', 'tss_enrichment']
-atac_metrics = atac_metrics[KEEP_ATAC_METRICS]
-atac_metrics.max_fraction_reads_from_single_autosome = atac_metrics.max_fraction_reads_from_single_autosome.fillna(0)
-atac_metrics.median_fragment_length = atac_metrics.median_fragment_length.fillna(0)
-atac_metrics.percent_mitochondrial = atac_metrics.percent_mitochondrial.fillna(0)
-atac_metrics.tss_enrichment = atac_metrics.tss_enrichment.fillna(0)
-atac_metrics['fraction_mitochondrial'] = atac_metrics.percent_mitochondrial / 100
 
-# cellranger-arc's RNA and ATAC barcodes already share one namespace, so no
-# atac_to_rna barcode translation is applied here (unlike main's joint_qc.py,
-# which is fed by separate custom RNA/ATAC pipelines with distinct whitelists).
-metrics = metrics.set_index('barcode').rename(columns=lambda x: '' + x).join(atac_metrics.rename(columns=lambda x: 'atac_' + x))
-
-# get HQAA threshold
-values = np.log10(atac_metrics[(atac_metrics.tss_enrichment > 2)].hqaa).values
-values = values.reshape((len(values),1))
-thresholds = threshold_multiotsu(image=values, classes=2, nbins=256)
-# convert back to linear scale
-thresholds = [pow(10, i) for i in thresholds]
-lower_thres = round(thresholds[0])
-lower_thres = max(lower_thres, 100)
-values = np.log10(atac_metrics[(atac_metrics.hqaa > lower_thres)].hqaa).values
-values = values.reshape((len(values),1))
-thresholds = threshold_multiotsu(image=values, classes=3, nbins=256)
-# convert back to linear scale
-thresholds = [pow(10, i) for i in thresholds]
-THRESHOLD_ATAC_MIN_HQAA = round(thresholds[1])
-
-metrics['filter_atac_min_hqaa'] = metrics.atac_hqaa >= THRESHOLD_ATAC_MIN_HQAA
-
-### get THRESHOLD_ATAC_MAX_MITO
-if (args.filter_MT_ATAC == True):
-    n_peaks, atac_kde_df = guess_n_classes(metrics, "ATAC")
-    THRESHOLD_ATAC_MAX_MITO = get_chrMT_threshold_ATAC(metrics, n_peaks = n_peaks)
-
-
-
-### get cells that passed all thresholds; those that passed post-CB nUMIs have been identified above
+### get cells/nuclei that passed all thresholds; those that passed post-CB nUMIs have been identified above
 metrics['filter_cellbender_cell_probability'] = metrics.cell_probability >= THRESHOLD_CELLBENDER_MIN_CELL_PROBABILITY
 metrics['filter_rna_max_mito'] = metrics.rna_percent_mitochondrial <= THRESHOLD_RNA_MAX_MITO
-metrics['filter_rna_exon_to_full_gene_body_ratio'] = metrics.rna_exon_to_full_gene_body_ratio <= THRESHOLD_EXON_GENE_BODY_RATIO
-metrics['filter_atac_min_hqaa'] = metrics.atac_hqaa >= THRESHOLD_ATAC_MIN_HQAA
-metrics['filter_atac_min_tss_enrichment'] = metrics.atac_tss_enrichment >= THRESHOLD_ATAC_MIN_TSS_ENRICHMENT
-if (args.filter_MT_ATAC == True):
-    metrics['filter_atac_max_mito'] = metrics.atac_percent_mitochondrial <= THRESHOLD_ATAC_MAX_MITO
+if args.assay_res == "nucleus":
+    metrics['filter_rna_exon_to_full_gene_body_ratio'] = metrics.rna_exon_to_full_gene_body_ratio <= THRESHOLD_EXON_GENE_BODY_RATIO
+
+### get HELM threshold
+if args.assay_res == "cell":
+    metrics['rna_helm_metric'] = metrics.rna_fraction_mitochondrial * (1 - metrics.rna_exon_to_full_gene_body_ratio)
+    with np.errstate(divide='ignore', invalid='ignore'):
+            metrics['rna_log_helm_metric'] = np.log(metrics['rna_helm_metric'])
+    THRESHOLD_HELM, n_peaks_helm = get_helm_threshold(metrics)
+
+if args.assay_res == "cell":
+    metrics['filter_helm'] = metrics.rna_log_helm_metric >= THRESHOLD_HELM
+
 metrics['pass_all_filters'] = metrics.filter(like='filter_').all(axis=1)
 
 # to collect all Thresholds here
-if (args.filter_MT_ATAC == True):
-    thresholds = {
+thresholds = {
         "rna_min_umi": THRESHOLD_RNA_MIN_UMI,
         "fraction_cb_removed": THRESHOLD_FRACTION_CB_REMOVED,
         "rna_max_mito": THRESHOLD_RNA_MAX_MITO,
-        "exon_gene_body_ratio": THRESHOLD_EXON_GENE_BODY_RATIO,
-        "atac_min_hqaa": THRESHOLD_ATAC_MIN_HQAA,
-        "atac_min_tss_enrichment": THRESHOLD_ATAC_MIN_TSS_ENRICHMENT,
-        "atac_max_mito": THRESHOLD_ATAC_MAX_MITO,
-        }
+    }
+if args.assay_res == "nucleus":
+    thresholds["exon_gene_body_ratio"] = THRESHOLD_EXON_GENE_BODY_RATIO
 else:
-    thresholds = {
-        "rna_min_umi": THRESHOLD_RNA_MIN_UMI,
-        "fraction_cb_removed": THRESHOLD_FRACTION_CB_REMOVED,
-        "rna_max_mito": THRESHOLD_RNA_MAX_MITO,
-        "exon_gene_body_ratio": THRESHOLD_EXON_GENE_BODY_RATIO,
-        "atac_min_hqaa": THRESHOLD_ATAC_MIN_HQAA,
-        "atac_min_tss_enrichment": THRESHOLD_ATAC_MIN_TSS_ENRICHMENT
-        }
+    thresholds["helm"] = THRESHOLD_HELM
 
 log_thresholds(thresholds)
 
@@ -309,7 +255,6 @@ knee_plot_info = {
 }
 log_thresholds(knee_plot_info)
 
-
 ##########
 metrics = metrics.reset_index()
 # List of pass-QC barcodes
@@ -317,7 +262,7 @@ pass_qc_nuclei = list(sorted(metrics[metrics.pass_all_filters].barcode.to_list()
 
 
 # Plot QC metrics #to work on plotting
-fig, axs = plt.subplots(nrows=3, ncols=3, figsize=(3*4, 3*4))
+fig, axs = plt.subplots(nrows=2, ncols=3, figsize=(3*4, 2*4)) #fig size = width x height
 
 ax = axs[0, 0]
 barcode_rank_plot(metrics, ax)
@@ -325,18 +270,18 @@ ax.axhline(knee, color='red', ls='--', label='knee={:,}'.format(knee))
 ax.axhline(inflection, color='green', ls='--', label='inflection={:,}'.format(inflection))
 ax.axhline(end_cliff, color='blue', ls='--', label='end_cliff={:,}'.format(end_cliff))
 ax.axhline(plateau, color='orange', ls='--', label='plateau={:,}'.format(plateau))
-ax.set_title('Inferred n knees = {:,}'.format(n_peaks_knee_plot))
+ax.set_title('Inferred n knees = {:,}'.format(n_peaks_knee_plot)) 
 ax.legend()
 
 ax = axs[0, 1]
 rna_umis_vs_rna_mito_plot(metrics, ax)
-ax.axhline(THRESHOLD_RNA_MAX_MITO/100, color='blue', ls='--', label='max RNA %chrMT = {:,}'.format(THRESHOLD_RNA_MAX_MITO))
+ax.axhline(THRESHOLD_RNA_MAX_MITO/100, color='blue', ls='--', label='max RNA MT frac. = {:,}'.format(THRESHOLD_RNA_MAX_MITO))
 ax.axvline(THRESHOLD_RNA_MIN_UMI, color='red', ls='--')
 ax.legend()
 
 ax = axs[0, 2]
 cellbender_fraction_removed(metrics, ax)
-ax.axhline(THRESHOLD_FRACTION_CB_REMOVED, color='blue', ls='--', label='%ambient removed threshold Multi-otsu= {:,}'.format(THRESHOLD_FRACTION_CB_REMOVED))
+ax.axhline(THRESHOLD_FRACTION_CB_REMOVED, color='blue', ls='--')
 
 ax = axs[1, 0]
 sns.histplot(x='pct_cellbender_removed', data=metrics[(metrics.pct_cellbender_removed > 5) &
@@ -350,32 +295,22 @@ ax = axs[1, 1]
 cellbender_cell_probabilities(metrics, ax)
 
 ax = axs[1, 2]
-rna_umis_vs_exon_to_full_gene_body_ratio(metrics, ax)
-ax.axhline(THRESHOLD_EXON_GENE_BODY_RATIO, color='red', ls='--', label='exon/full ratio. Multi-otsu = {:,}'.format(round(THRESHOLD_EXON_GENE_BODY_RATIO, 2)))
-ax.legend()
-ax.axvline(THRESHOLD_RNA_MIN_UMI, color='red', ls='--')
-ax.set_xlim(left=0.8*THRESHOLD_RNA_MIN_UMI)
+if args.assay_res == "nucleus":
+    rna_umis_vs_exon_to_full_gene_body_ratio(metrics, ax)
+    ax.axhline(THRESHOLD_EXON_GENE_BODY_RATIO, color='red', ls='--', label='exon/full ratio. Multi-otsu = {:,}'.format(round(THRESHOLD_EXON_GENE_BODY_RATIO, 2)))
+    ax.legend()
+    ax.axvline(THRESHOLD_RNA_MIN_UMI, color='red', ls='--')
+    ax.set_xlim(left=0.8*THRESHOLD_RNA_MIN_UMI)
+else:
+    sns.histplot(x='rna_helm_metric', data=metrics, ax=ax)
+    ax.axvline(THRESHOLD_HELM, color='blue', ls='--', label='mito fraction x intron fraction thres= {:,}'.format(round(THRESHOLD_HELM, 2)))
+    ax.legend()
+    ax.set_xlabel('RNA frac. chrMT * (1 - exon/full gene)')
 
-ax = axs[2, 0]
-rna_umis_vs_atac_hqaa_plot(metrics, ax)
-ax.axhline(THRESHOLD_ATAC_MIN_HQAA, color='red', ls='--')
-ax.axvline(THRESHOLD_RNA_MIN_UMI, color='red', ls='--')
-
-ax = axs[2, 1]
-atac_hqaa_vs_atac_tss_enrichment_plot(metrics, ax, alpha=0.02)
-ax.axvline(THRESHOLD_ATAC_MIN_HQAA, color='red', ls='--', label='min ATAC HQAA = {:,}'.format(THRESHOLD_ATAC_MIN_HQAA))
-ax.axhline(THRESHOLD_ATAC_MIN_TSS_ENRICHMENT, color='red', ls='--')
-ax.legend()
-
-ax = axs[2, 2]
-atac_hqaa_vs_atac_mt_pct_plot(metrics, ax, alpha=0.02)
-ax.axvline(THRESHOLD_ATAC_MIN_HQAA, color='red', ls='--')
-if (args.filter_MT_ATAC == True):
-    ax.axhline(THRESHOLD_ATAC_MAX_MITO, color='green', ls='--', label='max ATAC %chrMT = {:,}'.format(THRESHOLD_ATAC_MAX_MITO))
-ax.legend()
-
-
-fig.suptitle('{:,} pass QC nuclei'.format(len(pass_qc_nuclei)) + " " + sample)
+if args.assay_res == "nuclei":
+    fig.suptitle('{:,} pass QC nuclei'.format(len(pass_qc_nuclei)) + " " + sample)
+else:
+    fig.suptitle('{:,} pass QC cells'.format(len(pass_qc_nuclei)) + " " + sample)
 fig.tight_layout()
 fig.savefig(qcPlot, bbox_inches='tight', dpi=300)
 
@@ -389,4 +324,5 @@ upsetplot.plot(for_upset, fig=fig, sort_by='cardinality', show_counts=True)
 fig.savefig(upsetPlot, bbox_inches='tight', dpi=300)
 
 
-metrics.to_csv(outmetrics, index=False)
+metrics.to_csv(outmetrics, index=False) 
+
