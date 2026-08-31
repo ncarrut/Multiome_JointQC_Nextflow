@@ -10,7 +10,7 @@ directory (containing `raw_feature_bc_matrix.h5`, `gex_possorted_bam.bam`,
 column in the samplesheet selects which QC module(s) that sample is routed
 through:
 
-- `multiome` (default if `assay` is omitted) — full RNA+ATAC DAG, joint QC via
+- `multiome` full RNA+ATAC DAG, joint QC via
   `joint_qc.py`.
 - `snRNA` — RNA half of the DAG only, QC via `rna_module_qc.py`
   (`--assay_res nucleus`), using the exon/full-gene-body intron-retention
@@ -18,8 +18,8 @@ through:
 - `scRNA` — RNA half of the DAG only, QC via `rna_module_qc.py`
   (`--assay_res cell`), using **HELM**
   (`rna_fraction_mitochondrial * (1 - rna_exon_to_full_gene_body_ratio)`) in
-  place of the exon-ratio filter, since whole-cell preps don't carry the same
-  nuclear pre-mRNA contamination signature that the exon-ratio filter targets.
+  place of the exon-ratio filter to capture the concordance between high exon-
+  ratio and low mitochondrial reads. 
 - `ATAC` — ATAC half of the DAG only, QC via `atac_module_qc.py`.
 
 A single samplesheet can mix all four assay types — each sample is routed to
@@ -38,13 +38,13 @@ running only `ATAQV_SINGLE_NUCLEUS` and `add_qc_metrics`.
 
 Required parameters:
 - `--samplesheet` : tab-delimited text file with columns `sample` and
-  `location` (path to the `cellranger-arc count` outs/ directory), plus
-  optionally `assay` (`multiome`/`snRNA`/`scRNA`/`ATAC`, default `multiome`),
+  `location` (path to the `cellranger-arc count` outs/ directory), 
+   `assay` (`multiome`/`snRNA`/`scRNA`/`ATAC`) plus optionally
   `cluster_res`, and `df_pk`.
 - `--results` : output directory for results (default: `results`).
 - `--filter_MT_ATAC` : whether to filter ATAC nuclei on a %chrMT threshold;
   multiome and ATAC only (default: `true`).
-- `--cellbender_fpr` : FPR threshold used to locate the CellBender output file
+- `--cellbender_fpr` : FPR threshold used for cellbender analysis
   (`<sample>.cellbender_FPR_<fpr>.h5`); multiome and RNA-only assays
   (default: `"0.05"`).
 
