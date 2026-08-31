@@ -189,17 +189,17 @@ process BIGWIG {
     label 'largemem'
 
     input:
-    tuple val(sample), val(location), val(cluster_res), val(df_pk)
+    tuple val(sample), val(location), val(cluster_res), val(df_pk), val(genome)
 
     output:
-    tuple val(sample), path("${sample}.bw")
+    tuple val(sample), val(genome), path("${sample}.bw")
 
     """
     # Convert fragments to bedgraph for bigwig generation
     zcat ${location}/atac_fragments.tsv.gz | awk 'BEGIN{OFS="\t"} {print \$1,\$2,\$3,\$4}' | sort -k1,1 -k2,2n | bedtools merge -i - -c 4 -o count > ${sample}.bedgraph
     LC_COLLATE=C sort -k1,1 -k2n,2 ${sample}.bedgraph > sorted.bedgraph
-    bedClip sorted.bedgraph ${get_chrom_sizes(params.genome)} clipped.bedgraph
-    bedGraphToBigWig clipped.bedgraph ${get_chrom_sizes(params.genome)} ${sample}.bw
+    bedClip sorted.bedgraph ${get_chrom_sizes(genome)} clipped.bedgraph
+    bedGraphToBigWig clipped.bedgraph ${get_chrom_sizes(genome)} ${sample}.bw
     rm sorted.bedgraph clipped.bedgraph ${sample}.bedgraph
     """
 
@@ -218,13 +218,13 @@ process PLOT_SIGNAL_AT_TSS {
     time '24h'
 
     input:
-    tuple val(sample), path(bw)
+    tuple val(sample), val(genome), path(bw)
 
     output:
     path("*.png") optional true
 
     """
-    plot-signal-at-tss.py --genes ${params.plot_signal_at_genes.join(' ')} --tss-file ${get_tss(params.genome)} --bigwigs ${bw}
+    plot-signal-at-tss.py --genes ${params.plot_signal_at_genes.join(' ')} --tss-file ${get_tss(genome)} --bigwigs ${bw}
     """
 
 }
@@ -241,15 +241,15 @@ process ATAQV_SINGLE_NUCLEUS {
     publishDir "${params.results}/atac_qc/single_nucleus", mode: 'link'
 
     input:
-    tuple val(sample), val(location), val(cluster_res), val(df_pk)
-    
+    tuple val(sample), val(location), val(cluster_res), val(df_pk), val(genome)
+
     output:
     tuple val(sample), path("${sample}.ataqv.txt.gz"), emit: metrics
     path("${sample}.ataqv.out")
 
     script:
     """
-    ataqv --name ${sample} --ignore-read-groups --nucleus-barcode-tag CB --metrics-file ${sample}.ataqv.txt.gz --tss-file ${get_tss(params.genome)} ${get_organism(params.genome)} ${location}/atac_possorted_bam.bam > ${sample}.ataqv.out
+    ataqv --name ${sample} --ignore-read-groups --nucleus-barcode-tag CB --metrics-file ${sample}.ataqv.txt.gz --tss-file ${get_tss(genome)} ${get_organism(genome)} ${location}/atac_possorted_bam.bam > ${sample}.ataqv.out
     """
 }
 
@@ -310,15 +310,15 @@ process ATAQV_BULK {
     publishDir "${params.results}/atac_qc/bulk", mode: 'link'
 
     input:
-    tuple val(sample), val(location), val(cluster_res), val(df_pk)
-    
+    tuple val(sample), val(location), val(cluster_res), val(df_pk), val(genome)
+
     output:
     tuple val(sample), path("${sample}.bulk.ataqv.json.gz"), emit: json
     tuple val(sample), path("${sample}.bulk.ataqv.txt"), emit: txt
 
     script:
     """
-    ataqv --name ${sample} --ignore-read-groups --metrics-file ${sample}.bulk.ataqv.json.gz --tss-file ${get_tss(params.genome)} ${get_organism(params.genome)} ${location}/atac_possorted_bam.bam > ${sample}.bulk.ataqv.txt
+    ataqv --name ${sample} --ignore-read-groups --metrics-file ${sample}.bulk.ataqv.json.gz --tss-file ${get_tss(genome)} ${get_organism(genome)} ${location}/atac_possorted_bam.bam > ${sample}.bulk.ataqv.txt
     """
 }
 
@@ -442,35 +442,44 @@ workflow {
         cluster_res = row.cluster_res ? row.cluster_res.toFloat() : params.cluster_res
         df_pk = row.df_pk ? row.df_pk.toFloat() : params.df_pk
         assay = row.assay ? row.assay : "multiome"
+        genome = row.genome
+
+        if (!genome) {
+            error "Sample '${sample}' is missing required 'genome' column (e.g. hg38, mm10)."
+        }
 
         if (!valid_assays.contains(assay)) {
             error "Sample '${sample}' has unrecognized assay '${assay}'. Expected one of: ${valid_assays.join(', ')}."
         }
 
         if (assay == "multiome") {
-            multiome_in << [sample, location, cluster_res, df_pk]
+            multiome_in << [sample, location, cluster_res, df_pk, genome]
         } else if (assay == "ATAC") {
-            atac_in << [sample, location, cluster_res, df_pk]
+            atac_in << [sample, location, cluster_res, df_pk, genome]
         } else {
-            rna_in << [sample, location, cluster_res, df_pk, assay_res[assay]]
+            rna_in << [sample, location, cluster_res, df_pk, genome, assay_res[assay]]
         }
     }
 
     if (multiome_in) {
         samples_ch = Channel.from(multiome_in)
-        samples_ch.view { sample, location, cluster_res, df_pk ->
-            "multiome: ${sample} | Location: ${location} | Cluster_res: ${cluster_res} | DoubletFinder_PK: ${df_pk}"
+        samples_ch.view { sample, location, cluster_res, df_pk, genome ->
+            "multiome: ${sample} | Location: ${location} | Genome: ${genome} | Cluster_res: ${cluster_res} | DoubletFinder_PK: ${df_pk}"
         }
+        // genome-agnostic processes don't need the genome field; strip it here
+        // rather than touching every downstream process signature
+        core_ch = samples_ch.map { sample, location, cluster_res, df_pk, genome -> tuple(sample, location, cluster_res, df_pk) }
 
-        splitter_out = SPLITTER(samples_ch)
-        intron_counter_out = INTRONCOUNTER(samples_ch)
-        rna_metrics_out = QC(samples_ch.join(splitter_out.GEX))
+        splitter_out = SPLITTER(core_ch)
+        intron_counter_out = INTRONCOUNTER(core_ch)
+        rna_metrics_out = QC(core_ch.join(splitter_out.GEX))
         qc_out = PLOTQC(rna_metrics_out)
         rankplot_out = INTERACTIVEBARCODERANKPLOT(splitter_out.GEX)
         cellbender_out = CELLBENDER(splitter_out.GEX)
         emptyDrops_out = EMPTYDROPS(splitter_out.GEX.join(cellbender_out.metrics))
 
-        // ATAC QC processing with 10X cellranger alignment
+        // ATAC QC processing with 10X cellranger alignment; these need per-sample genome
+        // for TSS/organism/chrom-sizes lookups, so they take the full samples_ch tuple
         bigwig_out = BIGWIG(samples_ch)
         tss_plot_out = PLOT_SIGNAL_AT_TSS(bigwig_out)
         atac_single_nucleus = ATAQV_SINGLE_NUCLEUS(samples_ch)
@@ -479,15 +488,15 @@ workflow {
         atac_bulk = ATAQV_BULK(samples_ch)
         atac_viewer = ATAQV_BULK_VIEWER(atac_bulk.json)
 
-        JOINT_QC(samples_ch.join(atac_processed).join(intron_counter_out.counts).join(cellbender_out.h5_fpr05).join(rna_metrics_out).join(emptyDrops_out.knee_pass))
+        JOINT_QC(core_ch.join(atac_processed).join(intron_counter_out.counts).join(cellbender_out.h5_fpr05).join(rna_metrics_out).join(emptyDrops_out.knee_pass))
     }
 
     if (rna_in) {
         rna_samples_ch = Channel.from(rna_in)
-        rna_samples_ch.view { sample, location, cluster_res, df_pk, res ->
-            "RNA-only (${res}): ${sample} | Location: ${location}"
+        rna_samples_ch.view { sample, location, cluster_res, df_pk, genome, res ->
+            "RNA-only (${res}): ${sample} | Location: ${location} | Genome: ${genome}"
         }
-        rna_loc_ch = rna_samples_ch.map { sample, location, cluster_res, df_pk, res -> tuple(sample, location, cluster_res, df_pk) }
+        rna_loc_ch = rna_samples_ch.map { sample, location, cluster_res, df_pk, genome, res -> tuple(sample, location, cluster_res, df_pk) }
 
         rna_splitter_out = SPLITTER(rna_loc_ch)
         rna_intron_counter_out = INTRONCOUNTER(rna_loc_ch)
@@ -496,7 +505,7 @@ workflow {
         rna_emptyDrops_out = EMPTYDROPS(rna_splitter_out.GEX.join(rna_cellbender_out.metrics))
 
         RNA_QC(
-            rna_samples_ch.map { sample, location, cluster_res, df_pk, res -> tuple(sample, res) }
+            rna_samples_ch.map { sample, location, cluster_res, df_pk, genome, res -> tuple(sample, res) }
                 .join(rna_intron_counter_out.counts)
                 .join(rna_cellbender_out.h5_fpr05)
                 .join(rna_rna_metrics_out)
@@ -506,8 +515,8 @@ workflow {
 
     if (atac_in) {
         atac_samples_ch = Channel.from(atac_in)
-        atac_samples_ch.view { sample, location, cluster_res, df_pk ->
-            "ATAC-only: ${sample} | Location: ${location}"
+        atac_samples_ch.view { sample, location, cluster_res, df_pk, genome ->
+            "ATAC-only: ${sample} | Location: ${location} | Genome: ${genome}"
         }
 
         atac_single_nucleus_only = ATAQV_SINGLE_NUCLEUS(atac_samples_ch)
