@@ -1,0 +1,195 @@
+---
+title: "Single-cell QC Summary Report"
+author: "`r Sys.getenv('USER')`"
+date: "`r Sys.Date()`"
+output:
+        bookdown::html_document2:
+            theme: readable
+            toc: true
+            toc_float: true
+            number_sections: true
+            fig_caption: true
+            self_contained: true
+            keep_md: true
+
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+<!--
+srun --nodes=1 --time=2:00:00 --mem=8GB --pty bash -i
+
+singularity exec docker://ncarrut/single_cell_report_env:kedlian_v4 R
+
+-->
+
+```{r}
+# Manage options
+if (!interactive()) {
+
+  RESULTS_DIR = arg_vec["results_dir"]
+  PROJECT = arg_vec["project"]
+
+  split_samples <- function(x) {
+    x <- strsplit(x, ",")[[1]]
+    x[nchar(x) > 0]
+  }
+
+  MULTIOME_SAMPLES = split_samples(arg_vec["multiome_samples"])
+  RNA_SAMPLES = split_samples(arg_vec["rna_samples"])
+  ATAC_SAMPLES = split_samples(arg_vec["atac_samples"])
+
+} else {
+  # interactive dev defaults - point at real outputs already on disk
+  RESULTS_DIR = "/nfs/mm-isilon/bioinfcore/ActiveProjects/Chun_taehwa_CU5-Multiome_15761-AA_ncarruth/results/15761-AA"
+  PROJECT = "15761-AA"
+
+  MULTIOME_SAMPLES = c("15761-AA-2", "15761-AA-3", "15761-AA-4", "15761-AA-5",
+                        "15761-AA-6", "15761-AA-7", "15761-AA-8", "15761-AA-9")
+  RNA_SAMPLES = character(0)
+  ATAC_SAMPLES = character(0)
+}
+
+ALL_SAMPLES = c(MULTIOME_SAMPLES, RNA_SAMPLES, ATAC_SAMPLES)
+```
+
+**Project:** `r PROJECT`
+
+**Samples included:** `r paste(ALL_SAMPLES, collapse = ", ")`
+
+```{r}
+###### Setup ##########
+library(knitr)
+
+# plain-language description of each automated filter, keyed by the filter_*
+# column it corresponds to in <sample>_metrics.txt / <sample>.outmetrics.csv
+filter_descriptions <- c(
+  filter_rna_emptyDrops = "The droplet is statistically distinguishable from background (by emptyDrops) noise in the gene expression data.",
+  filter_rna_min_umi = "The droplet has enough detected RNA molecules.",
+  filter_pct_cellbender_removed = "The droplet does not show excessive ambient RNA contamination (by CellBender).",
+  filter_cellbender_cell_probability = "The CellBender ambient-RNA-correction algorithm is highly confident this droplet contains a real cell, not background.",
+  filter_rna_max_mito = "The fraction of RNA coming from mitochondria is low, indicating a healthy, non-stressed/non-dying cell.",
+  filter_rna_exon_to_full_gene_body_ratio = "The RNA has the expected intron/exon composition.",
+  filter_helm = "Droplets are tested for having both very low mitochondrial reads and very few introns indicating it is a cell fragment",
+  filter_atac_min_hqaa = "The droplet has enough usable chromatin-accessibility (ATAC) sequencing signal.",
+  filter_atac_min_tss_enrichment = "The chromatin-accessibility signal is enriched at gene start sites, as expected for intact, high-quality nuclei.",
+  filter_atac_max_mito = "(optional) The fraction of chromatin signal coming from mitochondrial DNA is low, indicating a clean nuclear preparation."
+)
+
+rna_filters <- c("filter_rna_emptyDrops", "filter_rna_min_umi", "filter_pct_cellbender_removed",
+                  "filter_cellbender_cell_probability", "filter_rna_max_mito",
+                  "filter_rna_exon_to_full_gene_body_ratio", "filter_helm")
+atac_filters <- c("filter_atac_min_hqaa", "filter_atac_min_tss_enrichment", "filter_atac_max_mito")
+```
+
+```{r}
+# build one row per sample: where its metrics/plot files live, given the
+# fixed, assay-specific naming convention each QC module writes
+build_sample_frame <- function(samples, subdir, metrics_pattern, plot_pattern, assay) {
+  if (length(samples) == 0) return(NULL)
+  data.frame(
+    sample = samples,
+    assay = assay,
+    metrics_path = file.path(RESULTS_DIR, subdir, sprintf(metrics_pattern, samples)),
+    plot_path = file.path(RESULTS_DIR, subdir, sprintf(plot_pattern, samples)),
+    stringsAsFactors = FALSE
+  )
+}
+
+sample_frame <- do.call(rbind, Filter(Negate(is.null), list(
+  build_sample_frame(MULTIOME_SAMPLES, "joint_qc", "%s_metrics.txt", "%s_qcPlot.png", "multiome"),
+  build_sample_frame(RNA_SAMPLES, "rna_qc", "%s.outmetrics.csv", "%s.qcPlot.png", "rna"),
+  build_sample_frame(ATAC_SAMPLES, file.path("atac_qc", "module_qc"), "%s.outmetrics.csv", "%s.qcPlot.png", "atac")
+)))
+
+stopifnot(nrow(sample_frame) > 0)
+
+# read each sample's per-droplet metrics and tally how many passed every
+# applicable filter; pass_all_filters is written as the strings "True"/"False"
+sample_frame$n_pass <- NA_integer_
+present_filters <- character(0)
+
+for (i in seq_len(nrow(sample_frame))) {
+  metrics <- read.csv(sample_frame$metrics_path[i])
+  sample_frame$n_pass[i] <- sum(metrics$pass_all_filters == "True")
+  present_filters <- union(present_filters, intersect(names(filter_descriptions), names(metrics)))
+}
+
+any_rna <- any(present_filters %in% rna_filters)
+any_atac <- any(present_filters %in% atac_filters)
+```
+
+# How we assess sample quality
+
+An automated quality-control pipeline evaluates every
+droplet against a series of checks and keeps only the ones that pass all of
+them.
+`r if (any_rna && any_atac) "For these samples, both the gene-expression (RNA) and chromatin-accessibility (ATAC) signal from each nucleus are checked together." else if (any_rna) "For these samples, the gene-expression (RNA) signal from each cell is checked." else "For these samples, the chromatin-accessibility (ATAC) signal from each nucleus is checked."`
+A droplet must pass every applicable check below to be counted as a
+high-quality cell (or nucleus) used in downstream analysis.
+
+Specifically, each droplet is checked for:
+
+```{r results = "asis"}
+for (f in present_filters) {
+  cat(sprintf("* %s\n", filter_descriptions[[f]]))
+}
+```
+
+# Cells recovered per sample
+
+The table below shows, for each sample, how many droplets passed every
+quality check and were kept as high-quality cells (or nuclei) for downstream
+analysis.
+
+```{r}
+summary_table <- data.frame(
+  Sample = sample_frame$sample,
+  `Cells passing QC` = format(sample_frame$n_pass, big.mark = ",", scientific = FALSE, trim = TRUE),
+  check.names = FALSE
+)
+
+kable(summary_table, align = c("l", "r"))
+```
+
+# Per-sample QC plots
+
+**Top Row** 
+* knee plot 
+* mitochondrial fraction vs UMI 
+* CellBender data, fraction of counts removed as ambient RNA vs UMI 
+
+**Middle Row**
+* **CellBender data**, number of droplets passing '% ambient removed' filter 
+* **Cellbender data**, histogram of droplet cell probability for droplets passing EmptyDrops and mitochondrial fraction thresholds 
+* Exon/full-gene-body count ratio vs UMI used to filter out droplets with too many exon vs intron counts 
+
+**Bottom Row** 
+* **ATAC data**, ATAC reads vs RNA UMIs 
+* **ATAC data**, Transcription Start Site enrichment vs ATAC reads 
+* **ATAC data**, ATAC mitochondrial read fraction vs ATAC reads.  This won't be used if `--filter_MT_ATAC` is set to false 
+
+```{r results = "asis"}
+for (i in seq_len(nrow(sample_frame))) {
+  cat(sprintf("\n\n## %s\n\n", sample_frame$sample[i]))
+  cat("Detailed diagnostic view. Each point is one droplet; panels show the ",
+      "individual checks used to decide which droplets are kept.\n\n", sep = "")
+  cat(sprintf("![](%s)\n\n", sample_frame$plot_path[i]))
+}
+```
+
+```{r}
+
+```
+
+# Acknowledgment
+
+It is important to document use of each Biomedical Research Core Facility by investigators in publications. This facilitates efforts to obtain funding for our Cores and their continued functioning. Please recognize the core's contribution in the Acknowledgment section of your publications.
+
+
+"We acknowledge support from the Bioinformatics Core of the University of Michigan Medical School's Biomedical Research Core Facilities (RRID:SCR_019168)."
+
+
+If core staff have added scientific value to your project -- made intellectual contributions in design, analysis and interpretation of data and/or manuscript writing, then please consider including them as co-authors in your publications.

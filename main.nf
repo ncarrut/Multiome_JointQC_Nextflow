@@ -357,6 +357,7 @@ process JOINT_QC {
         path "${sample_id}_upsetPlot.png", emit: upset_plot
         path "${sample_id}_metrics.txt", emit: metrics
         path "${sample_id}.log", emit: log
+        val(sample_id), emit: sample_id
 
     script:
     """
@@ -389,6 +390,7 @@ process RNA_QC {
         path "${sample}.upsetPlot.png", emit: upset_plot
         path "${sample}.outmetrics.csv", emit: metrics
         path "${sample}.log", emit: log
+        val(sample), emit: sample_id
 
     script:
     """
@@ -415,6 +417,7 @@ process ATAC_QC {
         path "${sample}.upsetPlot.png", emit: upset_plot
         path "${sample}.outmetrics.csv", emit: metrics
         path "${sample}.log", emit: log
+        val(sample), emit: sample_id
 
     script:
     """
@@ -423,6 +426,39 @@ process ATAC_QC {
         --ATAC_results_dir ${params.results} \\
         --filter_MT_ATAC ${params.filter_MT_ATAC} \\
         --output .
+    """
+}
+
+process REPORT {
+    cpus 1
+    memory '16 GB'
+    publishDir "${params.results}", mode: 'copy'
+    container 'docker://ncarrut/single_cell_report_env:kedlian_v4'
+    time '4h'
+
+    input:
+        val(multiome_samples)
+        val(rna_samples)
+        val(atac_samples)
+        path(report_rmd)
+
+    output:
+        path "qc_report.html"
+        path "qc_report.md"
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+    library(rmarkdown)
+    library(bookdown)
+    arg_vec <- c(
+        project = "${file(params.samplesheet).baseName}",
+        results_dir = "${params.results}",
+        multiome_samples = "${multiome_samples.join(',')}",
+        rna_samples = "${rna_samples.join(',')}",
+        atac_samples = "${atac_samples.join(',')}"
+    )
+    rmarkdown::render("${report_rmd}", params = list(arg_vec = arg_vec), output_file = "qc_report.html", output_dir = getwd())
     """
 }
 
@@ -488,7 +524,7 @@ workflow {
         atac_bulk = ATAQV_BULK(samples_ch)
         atac_viewer = ATAQV_BULK_VIEWER(atac_bulk.json)
 
-        JOINT_QC(core_ch.join(atac_processed).join(intron_counter_out.counts).join(cellbender_out.h5_fpr05).join(rna_metrics_out).join(emptyDrops_out.knee_pass))
+        joint_qc_out = JOINT_QC(core_ch.join(atac_processed).join(intron_counter_out.counts).join(cellbender_out.h5_fpr05).join(rna_metrics_out).join(emptyDrops_out.knee_pass))
     }
 
     if (rna_in) {
@@ -504,7 +540,7 @@ workflow {
         rna_cellbender_out = CELLBENDER(rna_splitter_out.GEX)
         rna_emptyDrops_out = EMPTYDROPS(rna_splitter_out.GEX.join(rna_cellbender_out.metrics))
 
-        RNA_QC(
+        rna_qc_out = RNA_QC(
             rna_samples_ch.map { sample, location, cluster_res, df_pk, genome, rna_assay -> tuple(sample, rna_assay) }
                 .join(rna_intron_counter_out.counts)
                 .join(rna_cellbender_out.h5_fpr05)
@@ -522,6 +558,14 @@ workflow {
         atac_single_nucleus_only = ATAQV_SINGLE_NUCLEUS(atac_samples_ch)
         atac_processed_only = atac_single_nucleus_only.metrics | add_qc_metrics
 
-        ATAC_QC(atac_processed_only)
+        atac_qc_out = ATAC_QC(atac_processed_only)
     }
+
+    // Combined QC summary report - waits for whichever branch(es) above ran to
+    // finish, then reads their published metrics/plots directly from params.results
+    multiome_ready_ch = multiome_in ? joint_qc_out.sample_id.collect() : Channel.value([])
+    rna_ready_ch = rna_in ? rna_qc_out.sample_id.collect() : Channel.value([])
+    atac_ready_ch = atac_in ? atac_qc_out.sample_id.collect() : Channel.value([])
+
+    REPORT(multiome_ready_ch, rna_ready_ch, atac_ready_ch, file("${baseDir}/bin/qc_report.Rmd"))
 }
