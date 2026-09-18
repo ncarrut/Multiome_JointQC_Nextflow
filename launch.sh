@@ -11,7 +11,7 @@
 module load openjdk/18.0.1.1
 module load singularity/4.4.1
 
-BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR=<path to parent directory>
 
 nextflow run "${BASE_DIR}/main.nf" \
     --samplesheet "${BASE_DIR}/library-config.tsv" \
