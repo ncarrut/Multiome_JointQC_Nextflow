@@ -11,7 +11,7 @@
 module load openjdk/18.0.1.1
 module load singularity/4.4.1
 
-BASE_DIR=/nfs/mm-isilon/bioinfcore/ActiveProjects/ncarruth/Parker_P30/muscle_atlas/individual_datasets/Kedlian_2024/Multiome_QC/Multiome_JointQC_Nextflow
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 nextflow run "${BASE_DIR}/main.nf" \
     --samplesheet "${BASE_DIR}/library-config.tsv" \
