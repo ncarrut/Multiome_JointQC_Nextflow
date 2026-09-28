@@ -11,6 +11,7 @@ output:
             fig_caption: true
             self_contained: true
             keep_md: true
+bibliography: references.bib
 
 ---
 
@@ -66,9 +67,9 @@ library(knitr)
 # plain-language description of each automated filter, keyed by the filter_*
 # column it corresponds to in <sample>_metrics.txt / <sample>.outmetrics.csv
 filter_descriptions <- c(
-  filter_rna_emptyDrops = "The droplet is statistically distinguishable from background (by emptyDrops) noise in the gene expression data.",
+  filter_rna_emptyDrops = "The droplet is statistically distinguishable from background (by emptyDrops [@lun2019emptydrops]) noise in the gene expression data.",
   filter_rna_min_umi = "The droplet has enough detected RNA molecules.",
-  filter_pct_cellbender_removed = "The droplet does not show excessive ambient RNA contamination (by CellBender).",
+  filter_pct_cellbender_removed = "The droplet does not show excessive ambient RNA contamination (by CellBender [@fleming2023cellbender]).",
   filter_cellbender_cell_probability = "The CellBender ambient-RNA-correction algorithm is highly confident this droplet contains a real cell, not background.",
   filter_rna_max_mito = "The fraction of RNA coming from mitochondria is low, indicating a healthy, non-stressed/non-dying cell.",
   filter_rna_exon_to_full_gene_body_ratio = "The RNA has the expected intron/exon composition.",
@@ -157,18 +158,27 @@ kable(summary_table, align = c("l", "r"))
 # Per-sample QC plots
 
 **Top Row** 
+
 * knee plot 
+
 * mitochondrial fraction vs UMI 
+
 * CellBender data, fraction of counts removed as ambient RNA vs UMI 
 
-**Middle Row**
+**Middle Row** 
+
 * **CellBender data**, number of droplets passing '% ambient removed' filter 
+
 * **Cellbender data**, histogram of droplet cell probability for droplets passing EmptyDrops and mitochondrial fraction thresholds 
+
 * Exon/full-gene-body count ratio vs UMI used to filter out droplets with too many exon vs intron counts 
 
 **Bottom Row** 
+
 * **ATAC data**, ATAC reads vs RNA UMIs 
+
 * **ATAC data**, Transcription Start Site enrichment vs ATAC reads 
+
 * **ATAC data**, ATAC mitochondrial read fraction vs ATAC reads.  This won't be used if `--filter_MT_ATAC` is set to false 
 
 ```{r results = "asis"}
@@ -193,3 +203,5 @@ It is important to document use of each Biomedical Research Core Facility by inv
 
 
 If core staff have added scientific value to your project -- made intellectual contributions in design, analysis and interpretation of data and/or manuscript writing, then please consider including them as co-authors in your publications.
+
+# References

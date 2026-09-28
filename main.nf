@@ -58,13 +58,13 @@ process INTRONCOUNTER{
     errorStrategy 'ignore'
 
     input:
-    tuple val(sample), val(location), val(cluster_res), val(df_pk)
+    tuple val(sample), val(location), val(cluster_res), val(df_pk), val(bam_name)
     output:
     tuple val(sample), path("${sample}_counts.txt"), emit: counts
     path("*.log")
 
     """
-    intron_counter.sh ${location}/gex_possorted_bam.bam ${sample}_counts.txt 2>&1 | tee ${sample}.log
+    intron_counter.sh ${location}/${bam_name} ${sample}_counts.txt 2>&1 | tee ${sample}.log
     """
 }
 
@@ -78,13 +78,13 @@ process QC{
     time '5h'
 
     input:
-    tuple val(sample), val(bam_location), val(cluster_res), val(df_pk), val(mtx_location)
- 
+    tuple val(sample), val(bam_location), val(cluster_res), val(df_pk), val(bam_name), val(mtx_location)
+
     output:
     tuple val(sample), path("${sample}.qc.txt")
 
     """
-    qc-from-starsolo.py ${bam_location}/gex_possorted_bam.bam ${mtx_location}/matrix.mtx ${mtx_location}/barcodes.tsv > ${sample}.qc.txt
+    qc-from-starsolo.py ${bam_location}/${bam_name} ${mtx_location}/matrix.mtx ${mtx_location}/barcodes.tsv > ${sample}.qc.txt
     """
 
 }
@@ -172,7 +172,7 @@ process EMPTYDROPS {
     tuple val(sample), path("${sample}.knee.txt"), path("${sample}.pass.txt"), emit: knee_pass
 
     """
-    emptyDrops_wCellBender.R --donor ${sample} --barcodeList ${location} --cbMetrics ${cellbender_metrics} --lowerForKnee 100 --outKnee ${sample}.knee.txt --outPass ${sample}.pass.txt
+    emptyDrops_wCellBender.R --donor ${sample} --barcodeList ${location} --cbMetrics ${cellbender_metrics} --fdr ${params.emptydrops_fdr} --outKnee ${sample}.knee.txt --outPass ${sample}.pass.txt
     """
 }
 
@@ -441,6 +441,7 @@ process REPORT {
         val(rna_samples)
         val(atac_samples)
         path(report_rmd)
+        path(report_bib)
 
     output:
         path "qc_report.html"
@@ -505,10 +506,12 @@ workflow {
         // genome-agnostic processes don't need the genome field; strip it here
         // rather than touching every downstream process signature
         core_ch = samples_ch.map { sample, location, cluster_res, df_pk, genome -> tuple(sample, location, cluster_res, df_pk) }
+        // multiome data comes from `cellranger-arc count`, whose RNA bam is named gex_possorted_bam.bam
+        bam_ch = core_ch.map { sample, location, cluster_res, df_pk -> tuple(sample, location, cluster_res, df_pk, "gex_possorted_bam.bam") }
 
         splitter_out = SPLITTER(core_ch)
-        intron_counter_out = INTRONCOUNTER(core_ch)
-        rna_metrics_out = QC(core_ch.join(splitter_out.GEX))
+        intron_counter_out = INTRONCOUNTER(bam_ch)
+        rna_metrics_out = QC(bam_ch.join(splitter_out.GEX))
         qc_out = PLOTQC(rna_metrics_out)
         rankplot_out = INTERACTIVEBARCODERANKPLOT(splitter_out.GEX)
         cellbender_out = CELLBENDER(splitter_out.GEX)
@@ -533,10 +536,12 @@ workflow {
             "RNA-only (${rna_assay}): ${sample} | Location: ${location} | Genome: ${genome}"
         }
         rna_loc_ch = rna_samples_ch.map { sample, location, cluster_res, df_pk, genome, rna_assay -> tuple(sample, location, cluster_res, df_pk) }
+        // scRNA/snRNA data comes from plain `cellranger count`, whose RNA bam is named possorted_genome_bam.bam
+        rna_bam_ch = rna_loc_ch.map { sample, location, cluster_res, df_pk -> tuple(sample, location, cluster_res, df_pk, "possorted_genome_bam.bam") }
 
         rna_splitter_out = SPLITTER(rna_loc_ch)
-        rna_intron_counter_out = INTRONCOUNTER(rna_loc_ch)
-        rna_rna_metrics_out = QC(rna_loc_ch.join(rna_splitter_out.GEX))
+        rna_intron_counter_out = INTRONCOUNTER(rna_bam_ch)
+        rna_rna_metrics_out = QC(rna_bam_ch.join(rna_splitter_out.GEX))
         rna_cellbender_out = CELLBENDER(rna_splitter_out.GEX)
         rna_emptyDrops_out = EMPTYDROPS(rna_splitter_out.GEX.join(rna_cellbender_out.metrics))
 
@@ -567,5 +572,5 @@ workflow {
     rna_ready_ch = rna_in ? rna_qc_out.sample_id.collect() : Channel.value([])
     atac_ready_ch = atac_in ? atac_qc_out.sample_id.collect() : Channel.value([])
 
-    REPORT(multiome_ready_ch, rna_ready_ch, atac_ready_ch, file("${baseDir}/bin/qc_report.Rmd"))
+    REPORT(multiome_ready_ch, rna_ready_ch, atac_ready_ch, file("${baseDir}/bin/qc_report.Rmd"), file("${baseDir}/bin/references.bib"))
 }

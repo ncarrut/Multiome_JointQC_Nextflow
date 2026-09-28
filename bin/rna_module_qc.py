@@ -113,18 +113,18 @@ adata = anndata_from_h5(CELLBENDER, analyzed_barcodes_only=True)
 rna_metrics = pd.read_csv(RNA_METRICS, sep='\t')
 rna_metrics = rna_metrics[rna_metrics.barcode!='-']
 
-## Calculate ratio of exonic vs full gene body reads from intron counter output
+## Calculate ratio of exonic vs full gene body UMIs from intron counter output
 # cellranger has no STARsolo Gene/GeneFull matrices; instead derive the ratio from
-# per-read RE:A exonic('E')/intronic('I') tag counts (see bin/intron_counter.sh)
+# per-UMI RE:A exonic('E')/intronic('N') tag counts; 'I' is intergenic (see bin/intron_counter.sh)
 intron_counts = pd.read_csv(INTRON_COUNTS, sep=r'\s+', header=None, names=['count', 'barcode', 'type'],
                              engine='python', skipinitialspace=True)
-intron_counts = intron_counts[intron_counts.type.isin(['E', 'I'])]
+intron_counts = intron_counts[intron_counts.type.isin(['E', 'N'])]
 intron_pivot = intron_counts.pivot_table(index='barcode', columns='type', values='count',
                                          aggfunc='sum', fill_value=0).reset_index()
-intron_pivot = intron_pivot.set_index('barcode')
+intron_pivot = intron_pivot.set_index('barcode').reindex(columns=['E', 'N'], fill_value=0)
 intron_pivot.columns.name = None
 
-exon_ratio_dict = (intron_pivot['E'] / (intron_pivot['E'] + intron_pivot['I'])).to_dict()
+exon_ratio_dict = (intron_pivot['E'] / (intron_pivot['E'] + intron_pivot['N'])).to_dict()
 rna_metrics['exon_to_full_gene_body_ratio'] = rna_metrics.barcode.map(exon_ratio_dict)
 metrics = rna_metrics.set_index('barcode').rename(columns=lambda x: 'rna_' + x)
 
