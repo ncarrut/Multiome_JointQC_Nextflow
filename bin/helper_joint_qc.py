@@ -1174,6 +1174,29 @@ def rna_umis_vs_exon_to_full_gene_body_ratio(metrics, ax):
     return ax
 
 
+def rna_umis_vs_log_helm_plot(metrics, ax):
+    """
+    Scatter plot of RNA UMIs vs. log(HELM), the scRNA counterpart of the
+    exon-to-full-gene-body ratio plot. Barcodes with HELM == 0 (log = -inf) are dropped.
+
+    Parameters
+    ----------
+    metrics : pd.DataFrame
+        Must contain 'rna_umis', 'rna_helm_metric', 'rna_log_helm_metric', 'pass_all_filters'.
+    ax : matplotlib.axes.Axes
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+    """
+
+    sns.scatterplot(x='rna_umis', y='rna_log_helm_metric', data=metrics[metrics.rna_helm_metric > 0], ax=ax, hue='pass_all_filters', palette={True: 'red', False: 'black'}, edgecolor=None, alpha=0.3, s=5)
+    ax.set_xscale('log')
+    ax.set_xlabel('UMIs')
+    ax.set_ylabel('log(RNA frac. chrMT * (1 - exon/full gene))')
+    return ax
+
+
 def cellbender_fraction_removed(metrics, ax):
     """
     Scatter plot of RNA UMIs vs. fraction of counts removed by CellBender.

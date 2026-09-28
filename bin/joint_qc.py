@@ -338,7 +338,7 @@ ax = axs[0, 1]
 rna_umis_vs_rna_mito_plot(metrics, ax)
 ax.axhline(THRESHOLD_RNA_MAX_MITO/100, color='blue', ls='--', label='max RNA %chrMT = {:,}'.format(THRESHOLD_RNA_MAX_MITO))
 ax.axvline(THRESHOLD_RNA_MIN_UMI, color='red', ls='--')
-ax.legend()
+ax.legend(loc="upper right")
 
 ax = axs[0, 2]
 cellbender_fraction_removed(metrics, ax)
