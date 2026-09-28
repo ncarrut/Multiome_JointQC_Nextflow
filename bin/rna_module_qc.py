@@ -277,7 +277,7 @@ ax = axs[0, 1]
 rna_umis_vs_rna_mito_plot(metrics, ax)
 ax.axhline(THRESHOLD_RNA_MAX_MITO/100, color='blue', ls='--', label='max RNA MT frac. = {:,}'.format(THRESHOLD_RNA_MAX_MITO))
 ax.axvline(THRESHOLD_RNA_MIN_UMI, color='red', ls='--')
-ax.legend()
+ax.legend(loc="upper right")
 
 ax = axs[0, 2]
 cellbender_fraction_removed(metrics, ax)
@@ -302,12 +302,13 @@ if args.assay_res == "nucleus":
     ax.axvline(THRESHOLD_RNA_MIN_UMI, color='red', ls='--')
     ax.set_xlim(left=0.8*THRESHOLD_RNA_MIN_UMI)
 else:
-    sns.histplot(x='rna_helm_metric', data=metrics, ax=ax)
-    ax.axvline(THRESHOLD_HELM, color='blue', ls='--', label='mito fraction x intron fraction thres= {:,}'.format(round(THRESHOLD_HELM, 2)))
+    rna_umis_vs_log_helm_plot(metrics, ax)
+    ax.axhline(THRESHOLD_HELM, color='red', ls='--', label='log HELM threshold = {:,}'.format(round(THRESHOLD_HELM, 2)))
     ax.legend()
-    ax.set_xlabel('RNA frac. chrMT * (1 - exon/full gene)')
+    ax.axvline(THRESHOLD_RNA_MIN_UMI, color='red', ls='--')
+    ax.set_xlim(left=0.8*THRESHOLD_RNA_MIN_UMI)
 
-if args.assay_res == "nuclei":
+if args.assay_res == "nucleus":
     fig.suptitle('{:,} pass QC nuclei'.format(len(pass_qc_nuclei)) + " " + sample)
 else:
     fig.suptitle('{:,} pass QC cells'.format(len(pass_qc_nuclei)) + " " + sample)
