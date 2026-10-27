@@ -1,3 +1,0 @@
-sample_id	assay	RNA_results_dir	ATAC_results_dir
-Sample1		<path to RNA alignment results for sample1>	<path to ATAC alignment results for sample1>
-Sample2		<path to RNA alignment results for sample2>	<path to ATAC alignment results for sample2>
