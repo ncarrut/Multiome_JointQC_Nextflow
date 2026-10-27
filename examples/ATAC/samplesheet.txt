@@ -1,0 +1,3 @@
+sample	assay	location	genome
+ATAC_S1	ATAC	/path/to/cellranger-arc/S1/outs	hg38
+ATAC_S2	ATAC	/path/to/cellranger-arc/S2/outs	hg38

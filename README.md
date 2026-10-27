@@ -1,116 +1,129 @@
-# Multiome / scRNA / snRNA / ATAC Joint QC (Nextflow, cellranger branch)
+# Single-cell / single-nucleus Joint QC (Nextflow)
 
-This workflow submits 10X Cell Ranger (`cellranger-arc count`) data to a custom
-QC analysis. Output includes background-corrected RNA-seq counts and a list of
-pass-QC barcodes plus QC plots and visualizations.
+A Nextflow pipeline that runs barcode-level QC on 10x Genomics Cell Ranger
+output. It works with **Multiome (RNA + ATAC)**, **single-nucleus RNA**,
+**single-cell RNA** and **single-nucleus ATAC** data. For each sample it
+produces:
 
-Each sample's `location` always points at a `cellranger-arc count` outs/
-directory (containing `raw_feature_bc_matrix.h5`, `gex_possorted_bam.bam`,
-`atac_possorted_bam.bam`, `atac_fragments.tsv.gz`, etc). An optional `assay`
-column in the samplesheet selects which QC module(s) that sample is routed
-through:
+- ambient-RNA-corrected counts (CellBender), for downstream analysis
+- a per-barcode metrics table with a `pass_all_filters` column
+- diagnostic QC and upset plots
+- `qc_report.html`, a summary report covering all samples
 
-- `multiome` full RNA+ATAC DAG, joint QC via
-  `joint_qc.py`.
-- `snRNA` — RNA half of the DAG only, QC via `rna_module_qc.py`
-  (`--assay_res nucleus`), using the exon/full-gene-body intron-retention
-  ratio filter.
-- `scRNA` — RNA half of the DAG only, QC via `rna_module_qc.py`
-  (`--assay_res cell`), using **HELM**
-  (`rna_fraction_mitochondrial * (1 - rna_exon_to_full_gene_body_ratio)`) in
-  place of the exon-ratio filter to capture the concordance between high exon-
-  ratio and low mitochondrial reads. 
-- `ATAC` — ATAC half of the DAG only, QC via `atac_module_qc.py`.
-
-A single samplesheet can mix all four assay types — each sample is routed to
-the matching set of processes automatically. `snRNA`/`scRNA` samples skip the
-ATAC-side processes (`BIGWIG`, `PLOT_SIGNAL_AT_TSS`, `ATAQV_*`) and `JOINT_QC`;
-`ATAC` samples skip the RNA-side processes (`SPLITTER`, `INTRONCOUNTER`, `QC`,
-`CELLBENDER`, `EMPTYDROPS`) and the supplementary bigwig/bulk-ataqv processes,
-running only `ATAQV_SINGLE_NUCLEUS` and `add_qc_metrics`.
+Thresholds (UMI, mitochondrial fraction, ambient fraction, exon ratio, ATAC
+depth, …) are set automatically from each sample's own distributions. None
+need to be tuned by hand.
 
 ## Requirements
 
-- Nextflow (DSL2)
-- Singularity/Apptainer module available on compute nodes
+- [Nextflow](https://www.nextflow.io/) (DSL2, ≥ 20.10)
+- Singularity or Apptainer 
+- A GPU node for the CellBender step
 
-## Inputs
+## Quick start
 
-Required parameters:
-- `--samplesheet` : tab-delimited text file with columns `sample` and
-  `location` (path to the `cellranger-arc count` outs/ directory), 
-   `assay` (`multiome`/`snRNA`/`scRNA`/`ATAC`) plus optionally
-  `cluster_res`, and `df_pk`.
-- `--results` : output directory for results (default: `results`).
-- `--filter_MT_ATAC` : whether to filter ATAC nuclei on a %chrMT threshold;
-  multiome and ATAC only (default: `true`).
-- `--cellbender_fpr` : FPR threshold used for cellbender analysis
-  (`<sample>.cellbender_FPR_<fpr>.h5`); multiome and RNA-only assays
-  (default: `"0.05"`).
+1. Pick the example that matches your data and copy its samplesheet:
 
-```
-sample	assay	location	genome  cluster_res	df_pk
-S1	multiome	/path/to/cellranger-arc/outs  hg38
-S2	snRNA	/path/to/cellranger-arc/outs  hg38
-S3	scRNA	/path/to/cellranger-arc/outs  hg38
-S4	ATAC	/path/to/cellranger-arc/outs  hg38
-```
+   | Data type | Example |
+   |---|---|
+   | 10x Multiome (cellranger-arc) | [examples/single_nuclei_multiome](examples/single_nuclei_multiome/README.md) |
+   | Single-nucleus RNA (cellranger) | [examples/single_nuclei_RNASeq](examples/single_nuclei_RNASeq/README.md) |
+   | Single-cell RNA (cellranger) | [examples/single_cell_RNASeq](examples/single_cell_RNASeq/README.md) |
+   | Single-nucleus ATAC | [examples/ATAC](examples/ATAC/README.md) |
+   | Several types in one run | [examples/mixed/samplesheet.txt](examples/mixed/samplesheet.txt) |
 
-## Run
+   Each example README lists the input files needed and explains every panel
+   of the QC plots.
+
+2. For multiome or ATAC samples, copy
+   [conf/references.example.config](conf/references.example.config) and fill in the
+   TSS and chromosome-sizes files for your genome(s).
+
+3. Run:
+
+   ```bash
+   nextflow run -resume /path/to/Multiome_JointQC_Nextflow/main.nf \
+     --samplesheet samplesheet.txt \
+     --results results \
+     -c my_references.config \
+     -profile slurm
+   ```
+
+## Samplesheet
+
+Tab-delimited, one row per sample.
+
+| Column | Required | Description |
+|---|---|---|
+| `sample` | yes | Sample name, used in output file names |
+| `assay` | no (default `multiome`) | `multiome`, `snRNA`, `scRNA` or `ATAC` |
+| `location` | yes | Cell Ranger `outs/` directory |
+| `genome` | yes | Genome key, e.g. `hg38`, `mm10`. Supported: hg19, hg38, mm9, mm10, rn4–rn7. |
+| `cluster_res` | no | Overrides `--cluster_res` for this sample |
+| `df_pk` | no | Overrides `--df_pk` for this sample |
+
+## Parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `--samplesheet` | — | Path to the samplesheet (required) |
+| `--results` | `results` | Output directory |
+| `--filter_MT_ATAC` | `true` | Filter nuclei on ATAC mitochondrial % (multiome and ATAC) |
+| `--emptydrops_fdr` | `0.01` | FDR cutoff for calling a barcode non-empty with emptyDrops |
+| `--cellbender_fpr` | `0.05` | Which CellBender FPR result to use downstream. Must be one of `params.cellbender_fprs` (`0.01`, `0.05`); CellBender writes all of them to `cellbender/`. |
+| `params.tss` | `[:]` | Map of genome → TSS BED (multiome/ATAC). Set in a config file. |
+| `params.chrom_sizes` | `[:]` | Map of genome → chromosome sizes (multiome). Set in a config file. |
+| `params.plot_signal_at_genes` | GAPDH, MYH1, MYH2, MYH7 | Genes whose TSS ATAC signal is plotted (multiome) |
+
+## Profiles and site configuration
+
+| Profile | Use |
+|---|---|
+| `standard` (default) | Run every process on the local machine |
+| `slurm` | Submit each process as a SLURM job. Add account/partition options in your own config passed with `-c`. |
+| `greatlakes` | University of Michigan Great Lakes cluster (accounts, GPU partition, bind mounts, reference paths) |
+
+Site-specific settings go in a separate config file. See
+[conf/greatlakes.config](conf/greatlakes.config) for a complete example.
+
+### Great Lakes users
+
+The Great Lakes profile includes the reference files, so no `-c` is needed.
+Submit the driver job from the directory where `results/` and `work/` should
+be written:
 
 ```bash
-nextflow run -resume path_to_main.nf \
-  --samplesheet path_to_samplesheet.txt \
-  --results results
+sbatch /path/to/Multiome_JointQC_Nextflow/conf/greatlakes/launch.sh samplesheet.txt [results_dir]
 ```
 
-## Output
+## How samples are processed
 
-`atac_qc`            -: ATAQV visualizations at bulk and single cell levels; `atac_qc/module_qc` has `atac_module_qc.py` outputs for `ATAC`-assay samples 
+Each sample is routed by its `assay`:
 
-`atacv`              -: figures and data related to ATAQV 
+| Assay | Steps | QC script | Results |
+|---|---|---|---|
+| `multiome` | RNA + ATAC: CellBender, emptyDrops, intron counting, ataqv, bigwigs | `joint_qc.py` | `joint_qc/` |
+| `snRNA` | RNA only; filters on exon / full-gene-body ratio | `rna_module_qc.py --assay_res nucleus` | `rna_qc/` |
+| `scRNA` | RNA only; filters on HELM instead of exon ratio | `rna_module_qc.py --assay_res cell` | `rna_qc/` |
+| `ATAC` | ataqv per-nucleus metrics only | `atac_module_qc.py` | `atac_qc/module_qc/` |
 
-`ataqv/single-nucleus` -: per-barcode ATAC QC metrics (`<sample>.txt`), input to `atac_module_qc.py`/`joint_qc.py` 
+## Outputs
 
-`bigwig`             -: ATAC bigwig files for TSS for selected genes (multiome only) 
+| Directory | Contents | Assays |
+|---|---|---|
+| `qc_report.html` | Summary report: filters applied, cells passing per sample, QC plots | all |
+| `joint_qc/` | `<sample>_qcPlot.png`, `<sample>_upsetPlot.png`, `<sample>_metrics.txt` | multiome |
+| `rna_qc/` | `<sample>.qcPlot.png`, `<sample>.upsetPlot.png`, `<sample>.outmetrics.csv` | snRNA, scRNA |
+| `atac_qc/module_qc/` | `<sample>.qcPlot.png`, `<sample>.upsetPlot.png`, `<sample>.outmetrics.csv` | ATAC |
+| `cellbender/` | Ambient-corrected counts `<sample>.cellbender_FPR_<fpr>.h5`. **Use for downstream analysis.** | multiome, RNA |
+| `emptyDrops/` | emptyDrops knee points and pass list | multiome, RNA |
+| `counter/` | Per-barcode intron/exon read counts | multiome, RNA |
+| `qc/` | Per-barcode RNA read/UMI metrics | multiome, RNA |
+| `splitter/` | RNA (GEX) and ATAC matrices split from the Cell Ranger h5 | multiome, RNA |
+| `interactive-barcode-rank-plots/` | Interactive RNA barcode-rank plots | multiome |
+| `atac_qc/`, `ataqv/single-nucleus/` | ataqv metrics: bulk HTML viewer, per-nucleus tables and plots | multiome, ATAC |
+| `bigwig/` | ATAC coverage bigwigs and TSS signal plots | multiome |
 
-`cellbender`         -: background filtered RNA counts: `<sample>.cellbender_FPR_0.05.h5`.  Use this for downstream analysis 
-
-`counter`            -: intron/exon read counts (`<sample>_counts.txt`) used to derive the RNA exon/full-gene-body ratio 
-
-`emptyDrops`         -: artifacts from Empty Drops 
-
-`interactive-barcode...`     -: RNASeq barcode-rank plots (multiome only) 
-
-`joint_qc`           -: plots and tables from the joint QC script for `multiome` samples. Pass-QC barcodes can be extracted from `<sample>_metrics.txt`. Start with `<sample>_qcPlot.png` to assess data quality; plots described below
-
-`rna_qc`             -: `rna_module_qc.py` outputs for `snRNA`/`scRNA` samples 
-
-`qc`                 -: RNASeq QC artifacts 
-
-`splitter`           -: Separate RNA and ATAC data matrices. Note both modalities use the 'RNA barcodes' 
-
-### Plot descriptions for `joint_qc/<sample>_qcPlot.png` 
-**Top Row** 
-* knee plot 
-* mitochondrial fraction vs UMI 
-* CellBender data, fraction of counts removed as ambient RNA vs UMI 
-
-**Middle Row**
-* **CellBender data**, number of droplets passing '% ambient removed' filter 
-* **Cellbender data**, histogram of droplet cell probability for droplets passing EmptyDrops and mitochondrial fraction thresholds 
-* Exon/full-gene-body count ratio vs UMI used to filter out droplets with too many exon vs intron counts 
-
-**Bottom Row** 
-* **ATAC data**, ATAC reads vs RNA UMIs 
-* **ATAC data**, Transcription Start Site enrichment vs ATAC reads 
-* **ATAC data**, ATAC mitochondrial read fraction vs ATAC reads.  This won't be used if `--filter_MT_ATAC` is set to false 
-
-
-For `multiome`, `snRNA`, and `scRNA` samples, each QC module writes
-`<sample>.qcPlot.png`, `<sample>.upsetPlot.png`, `<sample>.outmetrics.csv`
-(or `<sample>_metrics.txt` for `joint_qc.py`), and `<sample>.log`.
-`scRNA`/`snRNA` outmetrics have no `atac_*` columns; `ATAC` outmetrics have no
-`rna_*` columns. `scRNA` metrics additionally include `rna_helm_metric`,
-`rna_log_helm_metric`, and `filter_helm` in place of
-`filter_rna_exon_to_full_gene_body_ratio`.
+In every metrics table, the pass-QC barcodes are the rows where
+`pass_all_filters` is `True`. For an explanation of the plots, see the
+example README for your data type.

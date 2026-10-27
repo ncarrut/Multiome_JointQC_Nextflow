@@ -1,0 +1,3 @@
+sample	assay	location	genome
+multiome_S1	multiome	/path/to/cellranger-arc/S1/outs	hg38
+multiome_S2	multiome	/path/to/cellranger-arc/S2/outs	hg38

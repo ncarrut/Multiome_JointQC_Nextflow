@@ -5,3 +5,4 @@ trace*
 work/*
 *.log
 *.err
+__pycache__/

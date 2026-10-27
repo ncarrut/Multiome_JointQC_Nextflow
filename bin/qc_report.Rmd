@@ -1,5 +1,5 @@
 ---
-title: "Single-cell QC Summary Report"
+title: "Single Cell/Nuclei QC Summary Report"
 author: "`r Sys.getenv('USER')`"
 date: "`r Sys.Date()`"
 output:
@@ -44,11 +44,10 @@ if (!interactive()) {
 
 } else {
   # interactive dev defaults - point at real outputs already on disk
-  RESULTS_DIR = "/nfs/mm-isilon/bioinfcore/ActiveProjects/Chun_taehwa_CU5-Multiome_15761-AA_ncarruth/results/15761-AA"
-  PROJECT = "15761-AA"
+  RESULTS_DIR = "/Location_of_CellRanger_results"
+  PROJECT = "Project_name"
 
-  MULTIOME_SAMPLES = c("15761-AA-2", "15761-AA-3", "15761-AA-4", "15761-AA-5",
-                        "15761-AA-6", "15761-AA-7", "15761-AA-8", "15761-AA-9")
+  MULTIOME_SAMPLES = c("S-2", "S-3", "S-4")
   RNA_SAMPLES = character(0)
   ATAC_SAMPLES = character(0)
 }
@@ -76,13 +75,15 @@ filter_descriptions <- c(
   filter_helm = "Droplets are tested for having both very low mitochondrial reads and very few introns indicating it is a cell fragment",
   filter_atac_min_hqaa = "The droplet has enough usable chromatin-accessibility (ATAC) sequencing signal.",
   filter_atac_min_tss_enrichment = "The chromatin-accessibility signal is enriched at gene start sites, as expected for intact, high-quality nuclei.",
+  filter_max_fraction_reads_from_single_autosome = "The chromatin-accessibility reads are not concentrated on a single chromosome, which would indicate an artifact.",
   filter_atac_max_mito = "(optional) The fraction of chromatin signal coming from mitochondrial DNA is low, indicating a clean nuclear preparation."
 )
 
 rna_filters <- c("filter_rna_emptyDrops", "filter_rna_min_umi", "filter_pct_cellbender_removed",
                   "filter_cellbender_cell_probability", "filter_rna_max_mito",
                   "filter_rna_exon_to_full_gene_body_ratio", "filter_helm")
-atac_filters <- c("filter_atac_min_hqaa", "filter_atac_min_tss_enrichment", "filter_atac_max_mito")
+atac_filters <- c("filter_atac_min_hqaa", "filter_atac_min_tss_enrichment",
+                  "filter_max_fraction_reads_from_single_autosome", "filter_atac_max_mito")
 ```
 
 ```{r}
@@ -106,6 +107,10 @@ sample_frame <- do.call(rbind, Filter(Negate(is.null), list(
 )))
 
 stopifnot(nrow(sample_frame) > 0)
+
+missing <- c(sample_frame$metrics_path, sample_frame$plot_path)
+missing <- missing[!file.exists(missing)]
+if (length(missing) > 0) stop("Missing QC outputs:\n  ", paste(missing, collapse = "\n  "))
 
 # read each sample's per-droplet metrics and tally how many passed every
 # applicable filter; pass_all_filters is written as the strings "True"/"False"
@@ -157,51 +162,46 @@ kable(summary_table, align = c("l", "r"))
 
 # Per-sample QC plots
 
-**Top Row** 
+Each plot is a detailed diagnostic view. Each point is one droplet, and dashed
+lines mark the thresholds chosen automatically for that sample.
 
-* knee plot 
+```{r}
+# panel-by-panel description of each assay's qcPlot layout
+plot_captions <- list(
+  multiome = c(
+    "**Top row:** RNA barcode-rank (knee) plot; RNA mitochondrial fraction vs. UMIs; fraction of counts CellBender removed as ambient vs. UMIs.",
+    "**Middle row:** histogram of % ambient removed; CellBender cell probability; exon / full-gene-body ratio vs. UMIs.",
+    "**Bottom row:** ATAC reads (HQAA) vs. RNA UMIs; ATAC TSS enrichment vs. HQAA; ATAC mitochondrial % vs. HQAA (applied only if `filter_MT_ATAC` is on)."
+  ),
+  snRNA = c(
+    "**Top row:** RNA barcode-rank (knee) plot; RNA mitochondrial fraction vs. UMIs; fraction of counts CellBender removed as ambient vs. UMIs.",
+    "**Bottom row:** histogram of % ambient removed; CellBender cell probability; exon / full-gene-body ratio vs. UMIs."
+  ),
+  scRNA = c(
+    "**Top row:** RNA barcode-rank (knee) plot; RNA mitochondrial fraction vs. UMIs; fraction of counts CellBender removed as ambient vs. UMIs.",
+    "**Bottom row:** histogram of % ambient removed; CellBender cell probability; log HELM (mitochondrial fraction × intronic fraction) vs. UMIs."
+  ),
+  atac = c(
+    "**Top row:** TSS enrichment vs. ATAC reads (HQAA); ATAC barcode-rank plot.",
+    "**Bottom row:** mitochondrial % vs. HQAA; max fraction of reads from a single autosome vs. HQAA."
+  )
+)
 
-* mitochondrial fraction vs UMI 
-
-* CellBender data, fraction of counts removed as ambient RNA vs UMI 
-
-**Middle Row** 
-
-* **CellBender data**, number of droplets passing '% ambient removed' filter 
-
-* **Cellbender data**, histogram of droplet cell probability for droplets passing EmptyDrops and mitochondrial fraction thresholds 
-
-* Exon/full-gene-body count ratio vs UMI used to filter out droplets with too many exon vs intron counts 
-
-**Bottom Row** 
-
-* **ATAC data**, ATAC reads vs RNA UMIs 
-
-* **ATAC data**, Transcription Start Site enrichment vs ATAC reads 
-
-* **ATAC data**, ATAC mitochondrial read fraction vs ATAC reads.  This won't be used if `--filter_MT_ATAC` is set to false 
+# RNA-only samples share one results dir; tell snRNA from scRNA by which filter they wrote
+caption_key <- function(i) {
+  if (sample_frame$assay[i] != "rna") return(sample_frame$assay[i])
+  cols <- names(read.csv(sample_frame$metrics_path[i], nrows = 1))
+  if ("filter_helm" %in% cols) "scRNA" else "snRNA"
+}
+```
 
 ```{r results = "asis"}
 for (i in seq_len(nrow(sample_frame))) {
   cat(sprintf("\n\n## %s\n\n", sample_frame$sample[i]))
-  cat("Detailed diagnostic view. Each point is one droplet; panels show the ",
-      "individual checks used to decide which droplets are kept.\n\n", sep = "")
+  cat(paste0("* ", plot_captions[[caption_key(i)]], collapse = "\n"), "\n\n")
   cat(sprintf("![](%s)\n\n", sample_frame$plot_path[i]))
 }
 ```
 
-```{r}
-
-```
-
-# Acknowledgment
-
-It is important to document use of each Biomedical Research Core Facility by investigators in publications. This facilitates efforts to obtain funding for our Cores and their continued functioning. Please recognize the core's contribution in the Acknowledgment section of your publications.
-
-
-"We acknowledge support from the Bioinformatics Core of the University of Michigan Medical School's Biomedical Research Core Facilities (RRID:SCR_019168)."
-
-
-If core staff have added scientific value to your project -- made intellectual contributions in design, analysis and interpretation of data and/or manuscript writing, then please consider including them as co-authors in your publications.
 
 # References

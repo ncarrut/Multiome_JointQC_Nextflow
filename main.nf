@@ -17,11 +17,24 @@ def get_organism (genome) {
 }
 
 def get_tss(genome) {
-    return params.tss[genome] ?: params.tss['hg38']
+    return params.tss[genome]
 }
 
 def get_chrom_sizes(genome) {
-    return params.chrom_sizes[genome] ?: params.chrom_sizes['hg38']
+    return params.chrom_sizes[genome]
+}
+
+// multiome/ATAC samples need per-genome reference files; fail early with a hint
+// rather than partway through the run
+def check_references(genome, sample, required) {
+    if (!ORGANISMS[genome]) {
+        error "Sample '${sample}' has unsupported genome '${genome}'. Expected one of: ${ORGANISMS.keySet().join(', ')}."
+    }
+    def missing = required.findAll { !params[it][genome] }
+    if (missing) {
+        error "Sample '${sample}': no ${missing.join('/')} file configured for genome '${genome}'. " +
+            "Set params.${missing[0]}['${genome}'] in a config passed with -c (see conf/references.example.config), or use a site profile such as -profile greatlakes."
+    }
 }
 
 process SPLITTER{
@@ -147,12 +160,12 @@ process CELLBENDER{
     output:
     path("${sample}.*")
     tuple val(sample), path("${sample}*.h5"), emit: h5_files
-    tuple val(sample), path("${sample}.cellbender_FPR_0.05.h5"), emit: h5_fpr05
-    tuple val(sample), path("${sample}.cellbender_FPR_0.05_metrics.csv"), emit: metrics
+    tuple val(sample), path("${sample}.cellbender_FPR_${params.cellbender_fpr}.h5"), emit: h5_selected
+    tuple val(sample), path("${sample}.cellbender_FPR_${params.cellbender_fpr}_metrics.csv"), emit: metrics
     path("*.log")
 
     """
-    cellbender remove-background --cuda --epochs 150 --fpr 0.01 0.05 --input ${location} --output ./${sample}.cellbender.h5 \
+    cellbender remove-background --cuda --epochs 150 --fpr ${params.cellbender_fprs.join(' ')} --input ${location} --output ./${sample}.cellbender.h5 \
         --projected-ambient-count-threshold 2 --posterior-batch-size 64 --exclude-feature-types Peaks
     cp .command.log ${sample}.log
     """
@@ -195,8 +208,8 @@ process BIGWIG {
     tuple val(sample), val(genome), path("${sample}.bw")
 
     """
-    # Convert fragments to bedgraph for bigwig generation
-    zcat ${location}/atac_fragments.tsv.gz | awk 'BEGIN{OFS="\t"} {print \$1,\$2,\$3,\$4}' | sort -k1,1 -k2,2n | bedtools merge -i - -c 4 -o count > ${sample}.bedgraph
+    # Convert fragments to bedgraph for bigwig generation, dropping contigs absent from chrom sizes
+    zcat ${location}/atac_fragments.tsv.gz | awk 'BEGIN{OFS="\t"} NR==FNR{keep[\$1]; next} (\$1 in keep){print \$1,\$2,\$3,\$4}' ${get_chrom_sizes(genome)} - | sort -k1,1 -k2,2n | bedtools merge -i - -c 4 -o count > ${sample}.bedgraph
     LC_COLLATE=C sort -k1,1 -k2n,2 ${sample}.bedgraph > sorted.bedgraph
     bedClip sorted.bedgraph ${get_chrom_sizes(genome)} clipped.bedgraph
     bedGraphToBigWig clipped.bedgraph ${get_chrom_sizes(genome)} ${sample}.bw
@@ -221,7 +234,7 @@ process PLOT_SIGNAL_AT_TSS {
     tuple val(sample), val(genome), path(bw)
 
     output:
-    path("*.png") optional true
+    path("*.png", optional: true)
 
     """
     plot-signal-at-tss.py --genes ${params.plot_signal_at_genes.join(' ')} --tss-file ${get_tss(genome)} --bigwigs ${bw}
@@ -440,6 +453,10 @@ process REPORT {
         val(multiome_samples)
         val(rna_samples)
         val(atac_samples)
+        // staged into the same subdir layout publishDir uses, so the Rmd reads them from the work dir
+        path(multiome_files, stageAs: 'joint_qc/*')
+        path(rna_files, stageAs: 'rna_qc/*')
+        path(atac_files, stageAs: 'atac_qc/module_qc/*')
         path(report_rmd)
         path(report_bib)
 
@@ -454,7 +471,7 @@ process REPORT {
     library(bookdown)
     arg_vec <- c(
         project = "${file(params.samplesheet).baseName}",
-        results_dir = "${params.results}",
+        results_dir = ".",
         multiome_samples = "${multiome_samples.join(',')}",
         rna_samples = "${rna_samples.join(',')}",
         atac_samples = "${atac_samples.join(',')}"
@@ -466,6 +483,13 @@ process REPORT {
 workflow {
     def valid_assays = ["multiome", "scRNA", "snRNA", "ATAC"]
     def assay_res = ["scRNA": "cell", "snRNA": "nucleus"]
+
+    if (!params.samplesheet) {
+        error "Missing required --samplesheet. See examples/ for one samplesheet per assay type."
+    }
+    if (!params.cellbender_fprs.contains(params.cellbender_fpr.toString())) {
+        error "--cellbender_fpr '${params.cellbender_fpr}' is not one of the FPRs CellBender is run at (${params.cellbender_fprs.join(', ')}). Change --cellbender_fpr or add it to params.cellbender_fprs."
+    }
 
     multiome_in = []
     rna_in = []
@@ -490,6 +514,12 @@ workflow {
         }
 
         if (assay == "multiome") {
+            check_references(genome, sample, ['tss', 'chrom_sizes'])
+        } else if (assay == "ATAC") {
+            check_references(genome, sample, ['tss'])
+        }
+
+        if (assay == "multiome") {
             multiome_in << [sample, location, cluster_res, df_pk, genome]
         } else if (assay == "ATAC") {
             atac_in << [sample, location, cluster_res, df_pk, genome]
@@ -501,7 +531,7 @@ workflow {
     if (multiome_in) {
         samples_ch = Channel.from(multiome_in)
         samples_ch.view { sample, location, cluster_res, df_pk, genome ->
-            "multiome: ${sample} | Location: ${location} | Genome: ${genome} | Cluster_res: ${cluster_res} | DoubletFinder_PK: ${df_pk}"
+            "multiome: ${sample} | Location: ${location} | Genome: ${genome}"
         }
         // genome-agnostic processes don't need the genome field; strip it here
         // rather than touching every downstream process signature
@@ -527,7 +557,7 @@ workflow {
         atac_bulk = ATAQV_BULK(samples_ch)
         atac_viewer = ATAQV_BULK_VIEWER(atac_bulk.json)
 
-        joint_qc_out = JOINT_QC(core_ch.join(atac_processed).join(intron_counter_out.counts).join(cellbender_out.h5_fpr05).join(rna_metrics_out).join(emptyDrops_out.knee_pass))
+        joint_qc_out = JOINT_QC(core_ch.join(atac_processed).join(intron_counter_out.counts).join(cellbender_out.h5_selected).join(rna_metrics_out).join(emptyDrops_out.knee_pass))
     }
 
     if (rna_in) {
@@ -548,7 +578,7 @@ workflow {
         rna_qc_out = RNA_QC(
             rna_samples_ch.map { sample, location, cluster_res, df_pk, genome, rna_assay -> tuple(sample, rna_assay) }
                 .join(rna_intron_counter_out.counts)
-                .join(rna_cellbender_out.h5_fpr05)
+                .join(rna_cellbender_out.h5_selected)
                 .join(rna_rna_metrics_out)
                 .join(rna_emptyDrops_out.knee_pass)
         )
@@ -567,10 +597,14 @@ workflow {
     }
 
     // Combined QC summary report - waits for whichever branch(es) above ran to
-    // finish, then reads their published metrics/plots directly from params.results
+    // finish; their metrics/plots are staged in as inputs rather than read from params.results
     multiome_ready_ch = multiome_in ? joint_qc_out.sample_id.collect() : Channel.value([])
     rna_ready_ch = rna_in ? rna_qc_out.sample_id.collect() : Channel.value([])
     atac_ready_ch = atac_in ? atac_qc_out.sample_id.collect() : Channel.value([])
 
-    REPORT(multiome_ready_ch, rna_ready_ch, atac_ready_ch, file("${baseDir}/bin/qc_report.Rmd"), file("${baseDir}/bin/references.bib"))
+    multiome_files_ch = multiome_in ? joint_qc_out.metrics.mix(joint_qc_out.qc_plot).collect() : Channel.value([])
+    rna_files_ch = rna_in ? rna_qc_out.metrics.mix(rna_qc_out.qc_plot).collect() : Channel.value([])
+    atac_files_ch = atac_in ? atac_qc_out.metrics.mix(atac_qc_out.qc_plot).collect() : Channel.value([])
+
+    REPORT(multiome_ready_ch, rna_ready_ch, atac_ready_ch, multiome_files_ch, rna_files_ch, atac_files_ch, file("${baseDir}/bin/qc_report.Rmd"), file("${baseDir}/bin/references.bib"))
 }

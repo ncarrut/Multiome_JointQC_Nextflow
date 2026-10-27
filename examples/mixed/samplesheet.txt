@@ -1,0 +1,5 @@
+sample	assay	location	genome
+M1	multiome	/path/to/cellranger-arc/M1/outs	hg38
+N1	snRNA	/path/to/cellranger/N1/outs	hg38
+C1	scRNA	/path/to/cellranger/C1/outs	hg38
+A1	ATAC	/path/to/cellranger-arc/A1/outs	hg38

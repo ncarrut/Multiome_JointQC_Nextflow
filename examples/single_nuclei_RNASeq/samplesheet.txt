@@ -1,0 +1,3 @@
+sample	assay	location	genome
+snRNA_S1	snRNA	/path/to/cellranger/S1/outs	hg38
+snRNA_S2	snRNA	/path/to/cellranger/S2/outs	hg38
