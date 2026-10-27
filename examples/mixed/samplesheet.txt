@@ -1,0 +1,5 @@
+sample_id	assay	RNA_results_dir	ATAC_results_dir
+M1	multiome	/path/to/snRNAseq-NextFlow/results/	/path/to/snATACseq-NextFlow/results/
+N1	snRNA	/path/to/snRNAseq-NextFlow/results/	
+C1	scRNA	/path/to/snRNAseq-NextFlow/results/	
+A1	ATAC		/path/to/snATACseq-NextFlow/results/

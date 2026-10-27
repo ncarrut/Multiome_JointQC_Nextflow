@@ -1,0 +1,3 @@
+sample_id	assay	RNA_results_dir	ATAC_results_dir
+scRNA_S1	scRNA	/path/to/snRNAseq-NextFlow/results/	
+scRNA_S2	scRNA	/path/to/snRNAseq-NextFlow/results/	
