@@ -162,29 +162,18 @@ kable(summary_table, align = c("l", "r"))
 
 # Per-sample QC plots
 
-Each plot is a detailed diagnostic view. Each point is one droplet, and dashed
-lines mark the thresholds chosen automatically for that sample.
+Each point is one droplet, and dashed lines mark the thresholds chosen
+automatically for that sample. A panel-by-panel explanation of each plot type
+is in the [online examples](https://github.com/ncarrut/Multiome_JointQC_Nextflow/tree/main/examples).
 
 ```{r}
-# panel-by-panel description of each assay's qcPlot layout
-plot_captions <- list(
-  multiome = c(
-    "**Top row:** RNA barcode-rank (knee) plot; RNA mitochondrial fraction vs. UMIs; fraction of counts CellBender removed as ambient vs. UMIs.",
-    "**Middle row:** histogram of % ambient removed; CellBender cell probability; exon / full-gene-body ratio vs. UMIs.",
-    "**Bottom row:** ATAC reads (HQAA) vs. RNA UMIs; ATAC TSS enrichment vs. HQAA; ATAC mitochondrial % vs. HQAA (applied only if `filter_MT_ATAC` is on)."
-  ),
-  snRNA = c(
-    "**Top row:** RNA barcode-rank (knee) plot; RNA mitochondrial fraction vs. UMIs; fraction of counts CellBender removed as ambient vs. UMIs.",
-    "**Bottom row:** histogram of % ambient removed; CellBender cell probability; exon / full-gene-body ratio vs. UMIs."
-  ),
-  scRNA = c(
-    "**Top row:** RNA barcode-rank (knee) plot; RNA mitochondrial fraction vs. UMIs; fraction of counts CellBender removed as ambient vs. UMIs.",
-    "**Bottom row:** histogram of % ambient removed; CellBender cell probability; log HELM (mitochondrial fraction × intronic fraction) vs. UMIs."
-  ),
-  atac = c(
-    "**Top row:** TSS enrichment vs. ATAC reads (HQAA); ATAC barcode-rank plot.",
-    "**Bottom row:** mitochondrial % vs. HQAA; max fraction of reads from a single autosome vs. HQAA."
-  )
+# short caption and online example (with full plot description) for each assay's qcPlot
+EXAMPLES_URL <- "https://github.com/ncarrut/Multiome_JointQC_Nextflow/tree/main/examples"
+plot_info <- list(
+  multiome = c(label = "Multiome (RNA + ATAC) QC plot", example = "single_nuclei_multiome"),
+  snRNA = c(label = "Single-nucleus RNA QC plot", example = "single_nuclei_RNASeq"),
+  scRNA = c(label = "Single-cell RNA QC plot", example = "single_cell_RNASeq"),
+  atac = c(label = "ATAC QC plot", example = "ATAC")
 )
 
 # RNA-only samples share one results dir; tell snRNA from scRNA by which filter they wrote
@@ -198,8 +187,10 @@ caption_key <- function(i) {
 ```{r results = "asis"}
 for (i in seq_len(nrow(sample_frame))) {
   cat(sprintf("\n\n## %s\n\n", sample_frame$sample[i]))
-  cat(paste0("* ", plot_captions[[caption_key(i)]], collapse = "\n"), "\n\n")
-  cat(sprintf("![](%s)\n\n", sample_frame$plot_path[i]))
+  info <- plot_info[[caption_key(i)]]
+  cat(sprintf("![%s for %s ([plot description](%s/%s))](%s)\n\n",
+              info[["label"]], sample_frame$sample[i], EXAMPLES_URL, info[["example"]],
+              sample_frame$plot_path[i]))
 }
 ```
 
