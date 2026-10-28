@@ -79,6 +79,42 @@ process ATAC_QC {
     """
 }
 
+process REPORT {
+    cpus 1
+    memory '16 GB'
+    time '4h'
+    publishDir "${params.outdir}", mode: 'copy'
+    container 'docker://ncarrut/single_cell_report_env:kedlian_v4'
+
+    input:
+        val(multiome_samples)
+        val(rna_samples)
+        val(atac_samples)
+        // every sample's <sample>.outmetrics.csv and <sample>.qcPlot.png, staged flat as in --outdir
+        path(qc_files)
+        path(report_rmd)
+        path(report_bib)
+
+    output:
+        path "qc_report.html"
+        path "qc_report.md"
+
+    script:
+    """
+    #!/usr/bin/env Rscript
+    library(rmarkdown)
+    library(bookdown)
+    arg_vec <- c(
+        project = "${file(params.samplesheet).baseName}",
+        results_dir = ".",
+        multiome_samples = "${multiome_samples.join(',')}",
+        rna_samples = "${rna_samples.join(',')}",
+        atac_samples = "${atac_samples.join(',')}"
+    )
+    rmarkdown::render("${report_rmd}", params = list(arg_vec = arg_vec), output_file = "qc_report.html", output_dir = getwd())
+    """
+}
+
 workflow {
     def valid_assays = ["multiome", "scRNA", "snRNA", "ATAC"]
     def assay_res = ["scRNA": "cell", "snRNA": "nucleus"]
@@ -122,18 +158,34 @@ workflow {
         }
     }
 
+    // metrics and QC plots from every branch that runs, for the summary report
+    report_files = Channel.empty()
+
     if (multiome_in) {
         multiome_ch = Channel.from(multiome_in)
         JOINT_QC(multiome_ch)
+        report_files = report_files.mix(JOINT_QC.out.metrics, JOINT_QC.out.qc_plot)
     }
 
     if (rna_in) {
         rna_ch = Channel.from(rna_in)
         RNA_QC(rna_ch)
+        report_files = report_files.mix(RNA_QC.out.metrics, RNA_QC.out.qc_plot)
     }
 
     if (atac_in) {
         atac_ch = Channel.from(atac_in)
         ATAC_QC(atac_ch)
+        report_files = report_files.mix(ATAC_QC.out.metrics, ATAC_QC.out.qc_plot)
     }
+
+    // Combined QC summary report - collect() waits for every QC task to finish
+    REPORT(
+        multiome_in.collect { it[0] },
+        rna_in.collect { it[0] },
+        atac_in.collect { it[0] },
+        report_files.collect(),
+        file("${baseDir}/bin/qc_report.Rmd"),
+        file("${baseDir}/bin/references.bib")
+    )
 }
