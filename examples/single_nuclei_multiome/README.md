@@ -46,6 +46,7 @@ All files are written directly to `--outdir`:
 | `<sample>.upsetPlot.png` | Upset plot (below) |
 | `<sample>.outmetrics.csv` | Per-barcode metrics and filter results |
 | `<sample>.log` | Run log |
+| `qc_report.html` | Summary report covering all samples in the run |
 
 To get the pass-QC barcodes, keep the rows of `<sample>.outmetrics.csv`
 where `pass_all_filters` is `True`. The RNA and ATAC modalities both use

@@ -7,6 +7,7 @@ snRNAseq-NextFlow and snATACseq-NextFlow pipelines. It works with
 
 - a per-barcode metrics table with a `pass_all_filters` column
 - diagnostic QC and upset plots
+- `qc_report.html`, a summary report covering all samples
 
 Thresholds (UMI, mitochondrial fraction, ambient fraction, exon ratio, ATAC
 depth, …) are set automatically from each sample's own distributions. None
@@ -117,6 +118,7 @@ All files are written directly to `--outdir`:
 | `<sample_id>.upsetPlot.png` | Barcodes passing each combination of filters |
 | `<sample_id>.outmetrics.csv` | Per-barcode metrics and filter results |
 | `<sample_id>.log` | Run log |
+| `qc_report.html` | Summary report for the whole run: filters applied, cells passing per sample, each sample's QC plot (`qc_report.md` is the same in Markdown) |
 
 The pass-QC barcodes are the rows where `pass_all_filters` is `True`.
 `scRNA`/`snRNA` plots have no ATAC panels and their metrics have no `atac_*`
@@ -127,11 +129,14 @@ example README for your data type.
 
 ## Container
 
-The container is set in `nextflow.config`:
+The QC container is set in `nextflow.config`:
 
 ```
 process.container = 'docker://ncarrut/singlecell_qc:second'
 ```
+
+The `REPORT` process uses its own R container,
+`docker://ncarrut/single_cell_report_env:kedlian_v4`, set in `main.nf`.
 
 To use a local `.sif`, replace the value with its absolute path and make sure
 its directory is bound in `containerOptions`.
